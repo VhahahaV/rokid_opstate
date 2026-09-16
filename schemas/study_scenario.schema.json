@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opstate.local/schema/study_scenario.schema.json",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "scenario_id",
+    "title",
+    "participant_visible_events",
+    "candidate_episodes",
+    "operator_setup"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "study_scenario_v2"
+    },
+    "scenario_id": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "participant_visible_events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "kind",
+          "occurred_at_offset_ms",
+          "available_at_offset_ms",
+          "public_text"
+        ],
+        "properties": {
+          "event_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "occurred_at_offset_ms": {
+            "type": "integer"
+          },
+          "available_at_offset_ms": {
+            "type": "integer"
+          },
+          "episode_handle": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "material_revision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "public_text": {
+            "type": "string"
+          },
+          "runtime_delivery": {
+            "enum": [
+              "PRELOAD_HISTORY",
+              "SHOW_CONTEXT_CARD",
+              "SILENT_OBSERVATION"
+            ]
+          },
+          "material_change_for_scheduler": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "candidate_episodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "object_handle",
+          "episode_handle",
+          "intent_fingerprint",
+          "service_mode",
+          "scheduler_eligible",
+          "material_revision",
+          "scheduler_trigger_keys"
+        ],
+        "properties": {
+          "object_handle": {
+            "type": "string"
+          },
+          "episode_handle": {
+            "type": "string"
+          },
+          "intent_fingerprint": {
+            "type": "string"
+          },
+          "service_mode": {
+            "enum": [
+              "AWARENESS",
+              "DECISION",
+              "PREPARATION",
+              "EXECUTION"
+            ]
+          },
+          "scheduler_eligible": {
+            "type": "boolean"
+          },
+          "material_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "deadline_offset_ms": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "routine_window_active": {
+            "type": "boolean"
+          },
+          "scheduler_trigger_keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "operator_setup": {
+      "type": "object",
+      "required": [
+        "required_props",
+        "participant_task",
+        "reset"
+      ],
+      "properties": {
+        "required_props": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "participant_task": {
+          "type": "string"
+        },
+        "reset": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "private_gold_file": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,14 @@
+{
+  "window_start_elapsed_ms": 116000,
+  "window_end_elapsed_ms": 120000,
+  "sample_count": 200,
+  "angular_velocity_rms_deg_s": 1.2,
+  "angular_velocity_p95_deg_s": 2.0,
+  "linear_acceleration_rms_m_s2": 0.08,
+  "linear_acceleration_p95_m_s2": 0.12,
+  "stable_ratio": 0.9,
+  "is_stable": true,
+  "is_moving": false,
+  "speech_ratio": 0.0,
+  "raw_audio_stored": false
+}

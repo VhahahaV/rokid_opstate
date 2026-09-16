@@ -1,0 +1,4 @@
+<resources>
+    <color name="opstate_launcher_background">#000000</color>
+    <color name="opstate_splash_background">#F3F5F0</color>
+</resources>

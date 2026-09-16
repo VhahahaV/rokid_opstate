@@ -1,0 +1,10 @@
+{
+  "schema_version": "anchor_policy_v1",
+  "mode": "DEPLOYMENT_OPTIMIZED",
+  "description": "Post-paper field mode. May reduce checkpoint volume using trigger-key match and policy blockers; must not be used as the primary benchmark-aligned condition without separate scheduler evaluation.",
+  "trigger_key_mismatch_multiplier": 0.35,
+  "use_receipt_precheck": true,
+  "use_completed_episode_precheck": true,
+  "daily_service_budget": 8,
+  "hourly_anchor_budget": 6
+}

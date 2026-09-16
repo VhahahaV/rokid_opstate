@@ -1,0 +1,17 @@
+{
+  "type": "object",
+  "properties": {
+    "decision": {"type": "string", "enum": ["SERVICE", "NO_SERVICE"]},
+    "service": {"anyOf": [
+      {"type": "null"},
+      {"type": "object", "properties": {
+        "mode": {"type": "string", "enum": ["AWARENESS", "DECISION", "PREPARATION", "EXECUTION"]},
+        "title": {"type": "string", "minLength": 1, "maxLength": 40, "description": "Short Chinese title for glasses, at most 40 Unicode characters."},
+        "body": {"type": "string", "minLength": 1, "maxLength": 140, "description": "Concise Chinese service, preferably 35-55 characters; hard limit 140 Unicode characters."}
+      }, "required": ["mode", "title", "body"], "additionalProperties": false}
+    ]},
+    "evidence_refs": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": ["decision", "service", "evidence_refs"],
+  "additionalProperties": false
+}

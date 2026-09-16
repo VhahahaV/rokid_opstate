@@ -1,0 +1,2 @@
+{"capture_id":"capture-a6518762-5741-4fd3-885c-cb940c8c1398","quality_retry":0,"reason_codes":["MANUAL_DEBUG"],"requested_at_epoch_ms":1788434267502,"requested_elapsed_ms":442194038,"status":"REQUESTED"}
+{"capture_id":"capture-a6518762-5741-4fd3-885c-cb940c8c1398","channel":"TEST_FIXTURE","quality_valid":true,"received_at_epoch_ms":1788434267617,"status":"COMPLETED"}

@@ -1,0 +1,9 @@
+{
+  "profile_id": "rokid-v5-gpt-sol-high-v1",
+  "model_id": "gpt-5.6-sol",
+  "endpoint": "https://api.shuaiapi.com/v1/responses",
+  "api_key_env": "SHAI_API_OPENAI_KEY",
+  "wire_api": "responses",
+  "parameters": {"max_output_tokens": 4096, "reasoning_effort": "high"},
+  "response_language": "zh-CN"
+}

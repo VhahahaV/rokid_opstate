@@ -1,0 +1,68 @@
+{
+  "schema_version": "private_repo_sanitizer_v1",
+  "keep_globs": [
+    "**/gradle/**",
+    "**/gradlew",
+    "**/gradlew.bat",
+    "**/settings.gradle*",
+    "**/build.gradle*",
+    "**/AndroidManifest.xml",
+    "**/*Rokid*.kt",
+    "**/*Bluetooth*.kt",
+    "**/*P2P*.kt",
+    "**/*Camera*.kt",
+    "**/*Sensor*.kt",
+    "**/*Imu*.kt",
+    "**/*Display*.kt",
+    "**/*Message*.kt",
+    "**/*Protocol*.kt",
+    "**/*Transfer*.kt",
+    "**/*Connection*.kt",
+    "**/proguard-rules.pro",
+    "**/consumer-rules.pro",
+    "**/LICENSE*",
+    "**/NOTICE*"
+  ],
+  "rewrite_globs": [
+    "**/*.kt",
+    "**/*.kts",
+    "**/*.xml",
+    "**/*.properties"
+  ],
+  "drop_globs": [
+    "**/.git/**",
+    "**/.idea/**",
+    "**/.gradle/**",
+    "**/build/**",
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/release/**",
+    "**/*.apk",
+    "**/*.aab",
+    "**/*.jks",
+    "**/*.keystore",
+    "**/*.p12",
+    "**/*.pem",
+    "**/*.key",
+    "**/local.properties",
+    "**/.env*",
+    "**/google-services.json",
+    "**/assets/**/*.mp4",
+    "**/assets/**/*.wav",
+    "**/assets/**/*.mp3",
+    "**/assets/**/*.zip",
+    "**/assets/**/*.onnx",
+    "**/assets/**/*.tflite"
+  ],
+  "drop_path_keywords": [
+    "account", "login", "payment", "analytics", "telemetry", "advertising",
+    "avatar", "social", "feed", "chatbot", "game", "map", "navigation",
+    "cloud_sync", "user_profile", "recommendation"
+  ],
+  "rename_text": {
+    "com.private.realtopia": "ai.opstate.rokid",
+    "RealTopia": "OpstateRokidStudy"
+  },
+  "max_member_bytes": 52428800,
+  "copy_unknown_text_files": false
+}

@@ -1,0 +1,8 @@
+{
+  "request_id": "request-demo",
+  "decision_id": "decision-silent",
+  "decision": "NO_SERVICE",
+  "evidence_observation_ids": ["obs-message-move"],
+  "produced_at_epoch_ms": 1800000002000,
+  "expires_at_epoch_ms": 1800000022000
+}

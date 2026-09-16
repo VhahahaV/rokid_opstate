@@ -1,0 +1,684 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opstate.local/schema/device_message_v5.schema.json",
+  "title": "Actual StudyWire V5 envelope",
+  "type": "object",
+  "required": [
+    "protocol_version",
+    "message_id",
+    "session_id",
+    "session_epoch",
+    "sent_at_epoch_ms",
+    "type",
+    "payload",
+    "idempotency_key"
+  ],
+  "properties": {
+    "protocol_version": {
+      "const": "rokid-study-v5"
+    },
+    "message_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_epoch": {
+      "type": "integer"
+    },
+    "sent_at_epoch_ms": {
+      "type": "integer"
+    },
+    "type": {
+      "enum": [
+        "HELLO",
+        "READY",
+        "CLOCK_SYNC",
+        "CLOCK_READY",
+        "PING",
+        "PONG",
+        "SESSION_START",
+        "SESSION_READY",
+        "SESSION_STOP",
+        "SESSION_STOPPED",
+        "SESSION_RESET",
+        "SESSION_PAUSE",
+        "SESSION_PAUSED",
+        "CAPTURE_REQUEST",
+        "CONFIGURE_CAPTURE",
+        "FLUSH_CAPTURE_BUFFER",
+        "CAPTURE_BUFFER_STATUS",
+        "EDGE_DIGITAL_EVENT",
+        "IMAGE_COMMITTED",
+        "CAPTURE_STARTED",
+        "CAPTURE_FAILED",
+        "IMAGE_OFFER",
+        "IMAGE_GET_BLUETOOTH",
+        "IMAGE_CHUNK",
+        "IMAGE_CHUNK_ACK",
+        "IMAGE_ACK",
+        "SENSOR_SUMMARY",
+        "SHOW_CONTEXT_CARD",
+        "CLEAR_CONTEXT_CARD",
+        "SHOW_SERVICE_CARD",
+        "CLEAR_SERVICE_CARD",
+        "SHOW_SESSION_STATUS",
+        "SESSION_STATUS_VISIBLE_ACK",
+        "UPDATE_DEMO_STATUS",
+        "CLEAR_DISPLAY",
+        "CLEAR_ALL",
+        "EMERGENCY_CLEAR",
+        "DISPLAY_VISIBLE_ACK",
+        "DISPLAY_DISMISSED",
+        "ERROR"
+      ]
+    },
+    "payload": {
+      "type": "object"
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1
+    },
+    "expires_at_epoch_ms": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "SHOW_SERVICE_CARD"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": [
+              "title",
+              "body",
+              "visible_for_ms",
+              "decision_id",
+              "service_mode"
+            ],
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 40
+              },
+              "body": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 140
+              },
+              "visible_for_ms": {
+                "type": "integer",
+                "minimum": 1000,
+                "maximum": 30000
+              },
+              "decision_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "service_mode": {
+                "enum": [
+                  "AWARENESS",
+                  "DECISION",
+                  "PREPARATION",
+                  "EXECUTION"
+                ]
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "SHOW_CONTEXT_CARD",
+              "SHOW_SESSION_STATUS"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": [
+              "title",
+              "body",
+              "visible_for_ms",
+              "event_id"
+            ],
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 40
+              },
+              "body": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 140
+              },
+              "visible_for_ms": {
+                "type": "integer",
+                "minimum": 1000,
+                "maximum": 30000
+              },
+              "event_id": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "DISPLAY_VISIBLE_ACK"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": [
+              "decision_id",
+              "visible_at_epoch_ms",
+              "render_frame_count"
+            ],
+            "properties": {
+              "decision_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "visible_at_epoch_ms": {
+                "type": "integer"
+              },
+              "render_frame_count": {
+                "type": "integer",
+                "minimum": 2
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "SESSION_STATUS_VISIBLE_ACK"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": [
+              "status_id",
+              "render_frame_count"
+            ],
+            "properties": {
+              "status_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "render_frame_count": {
+                "type": "integer",
+                "minimum": 2
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "CAPTURE_REQUEST"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": [
+              "capture_id",
+              "width",
+              "height",
+              "jpeg_quality",
+              "capture_timeout_ms"
+            ],
+            "properties": {
+              "capture_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "width": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "height": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "jpeg_quality": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100
+              },
+              "capture_timeout_ms": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "IMAGE_OFFER"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": [
+              "image",
+              "port",
+              "token",
+              "addresses",
+              "transfer_protocol",
+              "certificate_pem",
+              "certificate_sha256"
+            ],
+            "properties": {
+              "image": {
+                "$ref": "#/$defs/image_descriptor"
+              },
+              "port": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "token": {
+                "type": "string",
+                "minLength": 1
+              },
+              "addresses": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "interface",
+                    "address"
+                  ],
+                  "properties": {
+                    "interface": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "address": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                }
+              },
+              "transfer_protocol": {
+                "const": "https-pinned-v1"
+              },
+              "certificate_pem": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8192
+              },
+              "certificate_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "camera_duration_ms": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "IMAGE_CHUNK"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": [
+              "capture_id",
+              "index",
+              "data"
+            ],
+            "properties": {
+              "capture_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "index": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "data": {
+                "type": "string",
+                "minLength": 1,
+                "contentEncoding": "base64"
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "IMAGE_CHUNK_ACK"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": [
+              "capture_id",
+              "index"
+            ],
+            "properties": {
+              "capture_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "index": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "IMAGE_ACK"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": [
+              "capture_id",
+              "sha256",
+              "byte_length"
+            ],
+            "properties": {
+              "capture_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "byte_length": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8388608
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "CLOCK_SYNC"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": [
+              "phone_minus_glasses_ms",
+              "uncertainty_ms"
+            ],
+            "properties": {
+              "phone_minus_glasses_ms": {
+                "type": "integer"
+              },
+              "uncertainty_ms": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 500
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "CLOCK_READY"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": [
+              "clock_ready"
+            ],
+            "properties": {
+              "clock_ready": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "READY"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": [
+              "camera_ready",
+              "display_ready",
+              "glasses_time_ms",
+              "firmware",
+              "app_version"
+            ],
+            "properties": {
+              "camera_ready": {
+                "type": "boolean"
+              },
+              "display_ready": {
+                "type": "boolean"
+              },
+              "glasses_time_ms": {
+                "type": "integer"
+              },
+              "firmware": {
+                "type": "string"
+              },
+              "app_version": {
+                "type": "string"
+              },
+              "apk_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "ERROR"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": [
+              "code"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "image_descriptor": {
+      "type": "object",
+      "required": [
+        "capture_id",
+        "session_id",
+        "session_epoch",
+        "captured_at_epoch_ms",
+        "width",
+        "height",
+        "rotation_degrees",
+        "byte_length",
+        "sha256",
+        "chunk_size"
+      ],
+      "properties": {
+        "capture_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session_epoch": {
+          "type": "integer"
+        },
+        "captured_at_epoch_ms": {
+          "type": "integer"
+        },
+        "width": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8192
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8192
+        },
+        "rotation_degrees": {
+          "enum": [
+            0,
+            90,
+            180,
+            270
+          ]
+        },
+        "byte_length": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8388608
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "chunk_size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16384
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

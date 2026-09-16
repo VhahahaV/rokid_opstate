@@ -1,0 +1,33 @@
+{
+  "schema_version": "anchor_policy_v1",
+  "mode": "BENCHMARK_ALIGNED",
+  "description": "Condition-blind upstream checkpoint scheduler. It over-generates candidate anchors and does not pre-solve lifecycle, completion, receipt, or SERVICE/NO_SERVICE.",
+  "required": {
+    "candidate_episode_present": true,
+    "image_valid": true,
+    "device_ready": true,
+    "inference_not_running": true,
+    "display_not_busy": true,
+    "evaluation_cooldown_satisfied": true
+  },
+  "trigger_families": {
+    "PERIODIC_COVERAGE": 0.05,
+    "MATERIAL_CHANGE": 0.25,
+    "TRANSITION_SETTLED": 0.20,
+    "DEADLINE_APPROACH": 0.15,
+    "STABLE_DWELL": 0.0,
+    "ROUTINE_WINDOW": 0.10,
+    "VISUAL_NOVELTY": 0.10,
+    "POST_SERVICE_AUDIT": 0.10
+  },
+  "active_candidate_base_score": 0.30,
+  "emit_threshold": 0.45,
+  "forbidden_model_fields": [
+    "scheduler_score",
+    "scheduler_trigger_family",
+    "expected_decision",
+    "gold",
+    "private_lifecycle",
+    "authoring_notes"
+  ]
+}

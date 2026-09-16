@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opstate.local/schema/device_message.schema.json",
+  "type": "object",
+  "required": [
+    "protocol_version", "message_id", "session_id", "session_epoch", "idempotency_key",
+    "type", "sent_at_epoch_ms", "payload"
+  ],
+  "properties": {
+    "protocol_version": {"const": "rokid-study-v4"},
+    "message_id": {"type": "string"},
+    "session_id": {"type": "string"},
+    "session_epoch": {"type": "integer"},
+    "trial_id": {"type": ["string", "null"]},
+    "correlation_id": {"type": ["string", "null"]},
+    "idempotency_key": {"type": "string"},
+    "type": {"enum": [
+      "SESSION_START", "SESSION_RESET", "SENSOR_WINDOW", "SHOW_CONTEXT_CARD", "CLEAR_CONTEXT_CARD",
+      "CAPTURE_REQUEST", "CAPTURE_STARTED", "CAPTURE_SUCCEEDED", "CAPTURE_FAILED",
+      "SHOW_SERVICE_CARD", "CLEAR_SERVICE_CARD", "CLEAR_ALL", "DISPLAY_VISIBLE_ACK",
+      "DISPLAY_DISMISSED", "USER_ACTION", "PING", "PONG", "DEVICE_READY", "DEVICE_ERROR"
+    ]},
+    "sent_at_epoch_ms": {"type": "integer"},
+    "expires_at_epoch_ms": {"type": ["integer", "null"]},
+    "payload": {"type": "object"}
+  },
+  "additionalProperties": false
+}

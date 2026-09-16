@@ -1,0 +1,52 @@
+package ai.opstate.rokid.phone.review
+
+import ai.opstate.protocol.StudyWire
+import ai.opstate.rokid.phone.data.*
+import kotlinx.serialization.json.*
+import java.io.File
+
+data class TrialSummary(val anchorId: String,val at: Long,val episode: String,val decision: String?,val title: String?,
+    val evidenceCount: Int,val latencyMs: Long?,val delivery: String?)
+data class SessionReview(val session: StudySessionEntity,val phase: String,val counts: Map<String,Int>,val verified: Boolean,val trials: List<TrialSummary>,val interrupted: Boolean=false,val photos: List<CapturedPhoto> = emptyList())
+data class CapturedPhoto(val id: String,val file: File,val capturedAt: Long,val receivedAt: Long,val metadata: JsonObject) {
+    val historical get()=metadata.string("source")?.endsWith("HISTORY")==true
+}
+data class TrialReview(val summary: TrialSummary,val request: JsonObject?,val raw: JsonObject?,val decision: JsonObject?,val image: File?,val providerRaw: JsonObject?=null)
+class SessionReviewRepository(private val journal: StudyJournal) {
+    private val dao get()=journal.dao
+    private fun JournalEntity.json()=StudyWire.json.parseToJsonElement(canonicalJson).jsonObject
+    private fun find(id: String,stream: String,anchor: String)=dao.eventForAnchor(id,stream,anchor)?.json()
+    fun photos(id: String): List<CapturedPhoto> = dao.stream(id,"observations").mapNotNull {event->
+        val row=event.json()
+        if(row.string("kind")!="IMAGE") return@mapNotNull null
+        val path=row.string("local_relative_path") ?: return@mapNotNull null
+        CapturedPhoto(row.string("observation_id") ?: event.sequence.toString(),journal.localImage(id,path),
+            row["source_occurred_at_epoch_ms"]?.jsonPrimitive?.longOrNull ?: row["occurred_at_epoch_ms"]?.jsonPrimitive?.longOrNull ?: 0,
+            row["available_at_epoch_ms"]?.jsonPrimitive?.longOrNull ?: 0,row)
+    }.sortedByDescending {it.capturedAt}
+    fun load(id: String): SessionReview {
+        val session=requireNotNull(dao.session(id)) { "SESSION_NOT_FOUND" }
+        fun key(row: JsonObject)=row.string("packet_id") ?: row.string("anchor_id")
+        val decisions=dao.stream(id,"decisions").map { it.json() }.associateBy(::key)
+        val raw=dao.stream(id,"raw_responses").map { it.json() }.associateBy(::key)
+        val deliveries=dao.stream(id,"deliveries").map { it.json() }.associateBy { it.string("decision_id") }
+        val trials=(dao.stream(id,"anchors")+dao.stream(id,"packets")).sortedBy {it.sequence}.map {it.json()}.map { row ->
+            val rowKey=key(row)!!;val decision=decisions[rowKey]
+            TrialSummary(rowKey,(row["cutoff_at_epoch_ms"] ?: row.getValue("anchor_time_epoch_ms")).jsonPrimitive.long,
+                row.string("candidate_episode_handle") ?: "online-packet",decision?.string("decision"),decision?.string("title"),
+                decision?.get("evidence_observation_ids")?.jsonArray?.size ?: 0,
+                raw[rowKey]?.get("latency_ms")?.jsonPrimitive?.longOrNull,deliveries[decision?.string("decision_id")]?.string("status"))
+        }
+        return SessionReview(session,dao.checkpoint(id)?.state ?: "UNKNOWN",dao.counts(id).associate { it.stream to it.count },journal.verify(id),trials,dao.checkpoint(id)?.stateJson?.let {StudyWire.json.parseToJsonElement(it).jsonObject.string("recovery_reason")}!=null,photos(id))
+    }
+    fun trial(id: String,trial: TrialSummary): TrialReview {
+        val request=find(id,"inference_requests",trial.anchorId)
+        val raw=find(id,"raw_responses",trial.anchorId)
+        val decision=find(id,"decisions",trial.anchorId)
+        val asset=request?.string("current_asset_id")
+        val image=asset?.let { value -> dao.imageForAsset(id,value)?.json()?.string("local_relative_path")?.let {journal.localImage(id,it)} }
+        val provider=dao.eventForAnchorOfType(id,"raw_responses",trial.anchorId,"PROVIDER_RESPONSE")?.json()
+        return TrialReview(trial,request,raw,decision,image,provider)
+    }
+}
+fun JsonObject.string(key: String)=get(key)?.jsonPrimitive?.contentOrNull

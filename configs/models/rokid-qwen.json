@@ -1,0 +1,9 @@
+{
+  "profile_id": "rokid-v5-qwen-flash-v1",
+  "model_id": "qwen3.7-flash-2026-07-15",
+  "endpoint": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+  "api_key_env": "DASHSCOPE_API_KEY",
+  "wire_api": "chat_completions",
+  "parameters": {"temperature": 0, "top_p": 1, "max_output_tokens": 512, "seed": 20260824, "enable_thinking": false},
+  "response_language": "zh-CN"
+}

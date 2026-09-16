@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opstate.local/schema/anchor_candidate.schema.json",
+  "type": "object",
+  "required": [
+    "anchor_id", "anchor_time_epoch_ms", "trigger_observation_id", "current_asset_id",
+    "candidate_object_handle", "candidate_episode_handle", "trigger_families", "score"
+  ],
+  "properties": {
+    "anchor_id": {"type": "string"},
+    "anchor_time_epoch_ms": {"type": "integer"},
+    "trigger_observation_id": {"type": "string"},
+    "current_asset_id": {"type": "string"},
+    "candidate_object_handle": {"type": "string"},
+    "candidate_episode_handle": {"type": "string"},
+    "trigger_families": {
+      "type": "array",
+      "items": {"enum": [
+        "PERIODIC_COVERAGE", "MATERIAL_CHANGE", "TRANSITION_SETTLED", "DEADLINE_APPROACH",
+        "STABLE_DWELL", "ROUTINE_WINDOW", "VISUAL_NOVELTY", "POST_SERVICE_AUDIT", "MANUAL_DEBUG"
+      ]},
+      "uniqueItems": true
+    },
+    "score": {"type": "number", "minimum": 0, "maximum": 1},
+    "scheduler_diagnostics_private": {"type": "object"}
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,12 @@
+{
+  "receipt_id": "receipt-demo",
+  "decision_id": "decision-demo",
+  "episode_handle": "ep_8f0c",
+  "object_handle": "obj_19a1",
+  "intent_fingerprint": "intent_2c91",
+  "service_mode": "PREPARATION",
+  "served_material_revision": 1,
+  "visible_at_epoch_ms": 1800000004000,
+  "evidence_observation_ids": ["obs-message-move"],
+  "visible_ack_frame_count": 2
+}

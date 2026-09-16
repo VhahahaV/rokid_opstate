@@ -1,0 +1,1 @@
+{"angular_velocity_p95_deg_s":0.2,"angular_velocity_rms_deg_s":0.1,"is_moving":false,"is_stable":true,"linear_acceleration_p95_m_s2":0.02,"linear_acceleration_rms_m_s2":0.01,"raw_audio_stored":false,"sample_count":80,"speech_ratio":0.0,"stable_ratio":1.0,"window_end_elapsed_ms":442194012,"window_start_elapsed_ms":442190012}

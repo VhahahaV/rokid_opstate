@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opstate.local/schema/inference_response.schema.json",
+  "type": "object",
+  "required": [
+    "request_id", "decision_id", "decision", "evidence_observation_ids",
+    "produced_at_epoch_ms", "expires_at_epoch_ms"
+  ],
+  "properties": {
+    "request_id": {"type": "string"},
+    "decision_id": {"type": "string"},
+    "decision": {"enum": ["SERVICE", "NO_SERVICE"]},
+    "service_mode": {"enum": ["AWARENESS", "DECISION", "PREPARATION", "EXECUTION"]},
+    "title": {"type": "string", "maxLength": 40},
+    "body": {"type": "string", "maxLength": 140},
+    "evidence_observation_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "produced_at_epoch_ms": {"type": "integer"},
+    "expires_at_epoch_ms": {"type": "integer"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"decision": {"const": "SERVICE"}}},
+      "then": {"required": ["service_mode", "title", "body"]}
+    },
+    {
+      "if": {"properties": {"decision": {"const": "NO_SERVICE"}}},
+      "then": {
+        "not": {"anyOf": [{"required": ["service_mode"]}, {"required": ["title"]}, {"required": ["body"]}]}
+      }
+    }
+  ],
+  "additionalProperties": false
+}

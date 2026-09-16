@@ -1,0 +1,6 @@
+<resources>
+    <style name="StudyTheme" parent="StudyTheme.Base">
+        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <item name="android:windowSplashScreenBackground">@color/opstate_splash_background</item>
+    </style>
+</resources>

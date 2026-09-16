@@ -1,0 +1,2 @@
+# Optional screenshot companion only; not needed to build or run the apps.
+Pillow==11.3.0

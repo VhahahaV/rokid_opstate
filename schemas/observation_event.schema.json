@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opstate.local/schema/observation_event.schema.json",
+  "title": "OPSTATE online observation",
+  "type": "object",
+  "required": ["observation_id", "kind", "occurred_at_epoch_ms", "available_at_epoch_ms", "content"],
+  "properties": {
+    "observation_id": {"type": "string", "minLength": 1},
+    "kind": {"enum": ["IMAGE", "SYNTHETIC_CONTEXT", "SENSOR_SUMMARY", "USER_ACTION", "ACTION_RECEIPT"]},
+    "occurred_at_epoch_ms": {"type": "integer"},
+    "available_at_epoch_ms": {"type": "integer"},
+    "content": {"type": "string"},
+    "asset_id": {"type": ["string", "null"]},
+    "episode_handle": {"type": ["string", "null"]},
+    "material_revision": {"type": ["integer", "null"], "minimum": 0}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"kind": {"const": "IMAGE"}}},
+      "then": {"required": ["asset_id"]}
+    }
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opstate.local/schema/inference_request_v2.schema.json",
+  "type": "object",
+  "required": [
+    "protocol_version",
+    "request_id",
+    "packet_id",
+    "snapshot_at_epoch_ms",
+    "trigger_types",
+    "new_event_ids",
+    "freshness",
+    "current_asset_id",
+    "current_image_sha256",
+    "observations",
+    "receipts",
+    "prompt_hash",
+    "preprocess_hash",
+    "model_id",
+    "parser_hash"
+  ],
+  "properties": {
+    "protocol_version": {
+      "const": "opstate-online-v2"
+    },
+    "request_id": {
+      "type": "string"
+    },
+    "packet_id": {
+      "type": "string"
+    },
+    "snapshot_at_epoch_ms": {
+      "type": "integer"
+    },
+    "trigger_types": {
+      "type": "array",
+      "items": {"type": "string", "enum": ["DIGITAL", "VISUAL", "HEARTBEAT", "PUBLIC_TIME", "OVERFLOW"]},
+      "uniqueItems": true
+    },
+    "new_event_ids": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "freshness": {
+      "type": "object",
+      "required": ["latest_image_age_ms", "observation_gap"],
+      "properties": {
+        "latest_image_age_ms": {"type": ["integer", "null"], "minimum": 0},
+        "observation_gap": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "current_asset_id": {
+      "type": "string"
+    },
+    "current_image_sha256": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{64}$"
+    },
+    "observations": {
+      "type": "array",
+      "items": {
+        "$ref": "observation_event.schema.json"
+      }
+    },
+    "receipts": {
+      "type": "array",
+      "items": {
+        "$ref": "action_receipt.schema.json"
+      }
+    },
+    "prompt_hash": {
+      "type": "string"
+    },
+    "preprocess_hash": {
+      "type": "string"
+    },
+    "model_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "parser_hash": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "not": {
+    "anyOf": [
+      {
+        "required": [
+          "scheduler_score"
+        ]
+      },
+      {
+        "required": [
+          "scheduler_trigger_family"
+        ]
+      },
+      {
+        "required": [
+          "gold"
+        ]
+      },
+      {
+        "required": [
+          "expected_decision"
+        ]
+      },
+      {
+        "required": [
+          "private_lifecycle"
+        ]
+      }
+    ]
+  },
+  "additionalProperties": false
+}

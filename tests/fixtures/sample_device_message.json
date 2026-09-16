@@ -1,0 +1,18 @@
+{
+  "protocol_version": "rokid-study-v4",
+  "message_id": "message-demo",
+  "session_id": "session-demo",
+  "session_epoch": 1800000000000,
+  "trial_id": "trial-demo",
+  "correlation_id": "anchor-demo",
+  "idempotency_key": "capture-demo",
+  "type": "CAPTURE_REQUEST",
+  "sent_at_epoch_ms": 1800000000000,
+  "expires_at_epoch_ms": 1800000005000,
+  "payload": {
+    "capture_id": "capture-demo",
+    "width": 1280,
+    "height": 720,
+    "jpeg_quality": 80
+  }
+}

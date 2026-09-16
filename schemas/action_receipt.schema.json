@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opstate.local/schema/action_receipt.schema.json",
+  "type": "object",
+  "required": [
+    "receipt_id", "decision_id", "episode_handle", "object_handle", "intent_fingerprint",
+    "service_mode", "served_material_revision", "visible_at_epoch_ms", "evidence_observation_ids"
+  ],
+  "properties": {
+    "receipt_id": {"type": "string"},
+    "decision_id": {"type": "string"},
+    "episode_handle": {"type": "string"},
+    "object_handle": {"type": "string"},
+    "intent_fingerprint": {"type": "string"},
+    "service_mode": {"enum": ["AWARENESS", "DECISION", "PREPARATION", "EXECUTION"]},
+    "served_material_revision": {"type": "integer", "minimum": 0},
+    "visible_at_epoch_ms": {"type": "integer"},
+    "evidence_observation_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "visible_ack_frame_count": {"type": "integer", "minimum": 2}
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,11 @@
+<resources>
+    <style name="StudyTheme.Base" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#145B58</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:statusBarColor">#F4F5F5</item>
+        <item name="android:navigationBarColor">#F4F5F5</item>
+        <item name="android:windowActionModeOverlay">true</item>
+    </style>
+    <style name="StudyTheme" parent="StudyTheme.Base" />
+</resources>

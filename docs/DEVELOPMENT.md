@@ -1,0 +1,69 @@
+# 开发与运行
+
+开发主机为 5080；完整路径与交接见 [MIGRATION_5080.md](implementation/MIGRATION_5080.md)。纯手机业务使用 API Key 直连供应商，不需要启动 Python 服务。
+
+## 环境
+
+- JDK 17–23；5080 使用独立 Temurin JDK 21，不改变系统 Java 8。
+- Gradle Wrapper 8.11.1、Kotlin 2.1.21、AGP 8.7.2。
+- Android SDK Platform 35、Build Tools 34.0.0、Linux platform-tools。
+- Python 3.9+；5080 的 `.venv` 使用 Python 3.12，依赖来自 `requirements.txt`。
+- Rokid `client-m:1.2.2` 与 `cxr-service-bridge:1.0` 由 Gradle 获取并缓存。
+
+新的 Linux x86_64 工作站执行 `bash tools/setup_linux.sh`。脚本在用户目录安装环境，验证 JDK/SDK 下载校验和，通过 sdkmanager 接受 SDK 许可，创建机器本地 `.local/environment.sh` 和 `local.properties`。重复执行可复用已安装工具。依赖下载时间不属于测试时长。
+
+5080 已完成环境安装，无须再次执行安装脚本：
+
+```bash
+source .local/environment.sh
+make apks
+make quick-check
+```
+
+`tools/gradle.sh` 自动读取该机器的 `.local/environment.sh`；没有此文件时按 `OPSTATE_JAVA_HOME`、`JAVA_HOME` 和常见 JDK 路径选择 Java。macOS 可保留本机 SDK 路径在 `local.properties` 中。
+
+## 命令与产物
+
+| 命令 | 范围 |
+|---|---|
+| `make apks` | 两个可安装 debug APK |
+| `make quick-check` | Python、core、protocol、phone JVM 短回归 |
+| `make android` | 两个平台 AAR 与手机 JVM 测试 |
+| `make test` | 静态 Schema/轨迹校验及 host 测试 |
+| `make demo` | 两段 Kotlin 模拟流程 |
+| `make serve` | 可选 HTTP mock，监听 127.0.0.1:8765 |
+| `make check-all` | 完整构建与 lint；本次迁移不重复执行 |
+
+APK 输出为 `code/phone-app/build/outputs/apk/debug/phone-app-debug.apk` 与 `code/glasses-app/build/outputs/apk/debug/glasses-app-debug.apk`。R6 公共历史已经包含在 debug assets 内；release 默认不打包研究测试数据。
+
+当前设备已测 APK 保留在 `dist/device-tested-2026-09-04/`。迁移主机通过 `OPSTATE_DEBUG_KEYSTORE` 复用现有调试签名，以便 `adb install -r` 覆盖安装并保留设备上的会话与加密配置。签名文件放在源码之外；不要卸载应用后重装来绕过签名问题。
+
+## 数据与可选 mock
+
+原始 R6 ZIP 保持在仓库根目录。若需重新生成公共输入：
+
+```bash
+.venv/bin/python tools/import_validation_bundle.py january_v10_online_validation_r6_data_bundle_20260903.zip --app-assets
+```
+
+该命令校验原始清单并只向 app 投影公共字段；Gold、作者元数据和 teacher receipts 不进入 app。中间解包目录 `.local/datasets/` 可再生，不需要迁移。
+
+Python 服务仅用于兼容契约和 mock 实验。`make serve` 启动后可访问 `http://127.0.0.1:8765/health`；用 Ctrl-C 停止。真实手机模型配置见 [DIRECT_MODEL_API.md](implementation/DIRECT_MODEL_API.md)。
+
+## 真机检查
+
+USB 设备目前连接 Mac；5080 不自动拥有它们的 ADB 连接。可在 Mac 下载服务器构建的 APK 后用本机 ADB 安装。详细命令见迁移文档。
+
+库 instrumentation 使用 `ai.opstate.rokid.phone.librarytest` / `ai.opstate.rokid.glasses.librarytest`，与正式研究宿主分开。`tools/device_smoke.py` 按显式序列号安装测试包。宿主硬件测试和 `tools/device_checks/` 中的可选脚本需要单独选择；默认短回归不会运行 30 分钟测试或产生模型用量。
+
+## 文件边界
+
+模块导航见 [CODE_MAP.md](CODE_MAP.md)。`.local/`、`.venv/`、`build/`、`.gradle/`、`reports/latest/` 都属于可再生或机器私有目录。`reports/evidence/` 是选定证据；`archive/original-v4/` 是历史交付。原始哈希不代表当前代码。
+
+当前源码清单：
+
+```bash
+.venv/bin/python tools/generate_manifest.py . --output reports/latest/source-manifest.json
+```
+
+源码清单排除环境、凭证、构建产物和历史归档。迁移另核对包含原始输入、证据、APK 的完整交付清单。

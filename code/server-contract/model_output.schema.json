@@ -1,0 +1,16 @@
+{
+  "type": "object",
+  "properties": {
+    "decision": {"type": "string", "enum": ["SERVICE", "NO_SERVICE"]},
+    "service": {"anyOf": [
+      {"type": "null"},
+      {"type": "object", "properties": {
+        "mode": {"type": "string", "enum": ["AWARENESS", "DECISION", "PREPARATION", "EXECUTION"]},
+        "title": {"type": "string"}, "body": {"type": "string"}
+      }, "required": ["mode", "title", "body"], "additionalProperties": false}
+    ]},
+    "evidence_refs": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": ["decision", "service", "evidence_refs"],
+  "additionalProperties": false
+}

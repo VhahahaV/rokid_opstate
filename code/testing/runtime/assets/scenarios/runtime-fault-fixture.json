@@ -1,0 +1,11 @@
+{
+  "schema_version": "study_scenario_v2",
+  "scenario_id": "runtime_fault_fixture",
+  "title": "SDK-independent runtime regression",
+  "participant_visible_events": [
+    {"event_id":"fixture-plan","kind":"MESSAGE","occurred_at_offset_ms":0,"available_at_offset_ms":0,"episode_handle":"ep-fixture","material_revision":0,"public_text":"Prepare the test equipment.","runtime_delivery":"PRELOAD_HISTORY","material_change_for_scheduler":false},
+    {"event_id":"fixture-change","kind":"MESSAGE","occurred_at_offset_ms":3000,"available_at_offset_ms":3000,"episode_handle":"ep-fixture","material_revision":1,"public_text":"The test equipment requirement changed.","runtime_delivery":"PRELOAD_HISTORY","material_change_for_scheduler":true}
+  ],
+  "candidate_episodes": [{"object_handle":"obj-fixture","episode_handle":"ep-fixture","intent_fingerprint":"intent-fixture","service_mode":"PREPARATION","scheduler_eligible":true,"material_revision":0}],
+  "operator_setup": {"required_props":[],"participant_task":"Automated runtime regression with simulated transport.","reset":"Dispose the isolated test database."}
+}

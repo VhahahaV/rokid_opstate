@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opstate.local/schema/inference_request_v2.schema.json",
+  "type": "object",
+  "required": [
+    "protocol_version",
+    "request_id",
+    "anchor_id",
+    "anchor_time_epoch_ms",
+    "current_asset_id",
+    "current_image_sha256",
+    "candidate",
+    "observations",
+    "receipts",
+    "prompt_hash",
+    "preprocess_hash",
+    "model_id",
+    "parser_hash"
+  ],
+  "properties": {
+    "protocol_version": {
+      "const": "opstate-online-v2"
+    },
+    "request_id": {
+      "type": "string"
+    },
+    "anchor_id": {
+      "type": "string"
+    },
+    "anchor_time_epoch_ms": {
+      "type": "integer"
+    },
+    "current_asset_id": {
+      "type": "string"
+    },
+    "current_image_sha256": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{64}$"
+    },
+    "candidate": {
+      "type": "object",
+      "required": [
+        "object_handle",
+        "episode_handle"
+      ],
+      "properties": {
+        "object_handle": {
+          "type": "string"
+        },
+        "episode_handle": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "observations": {
+      "type": "array",
+      "items": {
+        "$ref": "observation_event.schema.json"
+      }
+    },
+    "receipts": {
+      "type": "array",
+      "items": {
+        "$ref": "action_receipt.schema.json"
+      }
+    },
+    "prompt_hash": {
+      "type": "string"
+    },
+    "preprocess_hash": {
+      "type": "string"
+    },
+    "model_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "parser_hash": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "not": {
+    "anyOf": [
+      {
+        "required": [
+          "scheduler_score"
+        ]
+      },
+      {
+        "required": [
+          "scheduler_trigger_family"
+        ]
+      },
+      {
+        "required": [
+          "gold"
+        ]
+      },
+      {
+        "required": [
+          "expected_decision"
+        ]
+      },
+      {
+        "required": [
+          "private_lifecycle"
+        ]
+      }
+    ]
+  },
+  "additionalProperties": false
+}

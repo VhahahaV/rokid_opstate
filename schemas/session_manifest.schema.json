@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opstate.local/schema/session_manifest.schema.json",
+  "type": "object",
+  "required": [
+    "session_id",
+    "session_epoch",
+    "scenario_id",
+    "condition_code",
+    "started_at_epoch_ms",
+    "phone_app_version",
+    "glasses_app_version",
+    "runtime_config_sha256",
+    "model_id",
+    "prompt_sha256",
+    "preprocess_sha256",
+    "files"
+  ],
+  "properties": {
+    "session_id": {
+      "type": "string"
+    },
+    "session_epoch": {
+      "type": "integer"
+    },
+    "scenario_id": {
+      "type": "string"
+    },
+    "condition_code": {
+      "type": "string"
+    },
+    "started_at_epoch_ms": {
+      "type": "integer"
+    },
+    "ended_at_epoch_ms": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "phone_app_version": {
+      "type": "string"
+    },
+    "glasses_app_version": {
+      "type": "string"
+    },
+    "runtime_config_sha256": {
+      "type": "string"
+    },
+    "model_id": {
+      "type": "string"
+    },
+    "prompt_sha256": {
+      "type": "string"
+    },
+    "preprocess_sha256": {
+      "type": "string"
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "sha256",
+          "bytes"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "schema_version": {
+      "const": "opstate_session_export_v2"
+    },
+    "participant_alias": {
+      "type": "string"
+    },
+    "journal_entries": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "audit_head_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "parser_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "frozen": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}

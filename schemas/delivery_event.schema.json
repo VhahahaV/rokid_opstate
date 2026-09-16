@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opstate.local/schema/delivery_event.schema.json",
+  "type": "object",
+  "required": ["delivery_id", "decision_id", "status", "reason", "event_at_epoch_ms"],
+  "properties": {
+    "delivery_id": {"type": "string"},
+    "decision_id": {"type": "string"},
+    "status": {"enum": [
+      "NOT_ATTEMPTED", "SUPPRESSED_BY_RECEIPT", "INVALID_EVIDENCE", "STALE_DECISION",
+      "TRANSPORT_FAILED", "DISPLAY_VISIBLE", "DISPLAY_FAILED", "NO_SERVICE_SILENCE"
+    ]},
+    "reason": {"type": "string"},
+    "event_at_epoch_ms": {"type": "integer"},
+    "receipt_id": {"type": ["string", "null"]}
+  },
+  "additionalProperties": false
+}

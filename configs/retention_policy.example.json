@@ -1,0 +1,12 @@
+{
+  "schema_version": "retention_policy_v1",
+  "raw_audio": "NEVER_STORE",
+  "raw_imu": "MEMORY_ONLY_4_SECONDS",
+  "sensor_summaries": "STORE_UNTIL_SESSION_EXPORT",
+  "images": "STORE_APP_PRIVATE_UNTIL_RESEARCHER_EXPORT_OR_DELETE",
+  "model_requests": "STORE_REDACTED_JSON",
+  "model_responses": "STORE_RAW_AND_PARSED",
+  "bystander_redaction": "REQUIRED_BEFORE_EXTERNAL_SHARING",
+  "participant_delete_supported": true,
+  "export_encryption": "RECOMMENDED"
+}

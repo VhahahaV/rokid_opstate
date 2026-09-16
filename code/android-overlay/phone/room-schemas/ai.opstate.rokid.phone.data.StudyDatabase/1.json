@@ -1,0 +1,1065 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 1,
+    "identityHash": "7c673b7f439f29645cc82743270b6756",
+    "entities": [
+      {
+        "tableName": "study_session",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`sessionId` TEXT NOT NULL, `sessionEpoch` INTEGER NOT NULL, `participantAlias` TEXT NOT NULL, `scenarioId` TEXT NOT NULL, `conditionCode` TEXT NOT NULL, `startedAtEpochMs` INTEGER NOT NULL, `endedAtEpochMs` INTEGER, `appVersion` TEXT NOT NULL, `configHash` TEXT NOT NULL, PRIMARY KEY(`sessionId`))",
+        "fields": [
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionEpoch",
+            "columnName": "sessionEpoch",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "participantAlias",
+            "columnName": "participantAlias",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "scenarioId",
+            "columnName": "scenarioId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "conditionCode",
+            "columnName": "conditionCode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startedAtEpochMs",
+            "columnName": "startedAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endedAtEpochMs",
+            "columnName": "endedAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "appVersion",
+            "columnName": "appVersion",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "configHash",
+            "columnName": "configHash",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sessionId"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "context_event",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`eventId` TEXT NOT NULL, `sessionId` TEXT NOT NULL, `occurredAtEpochMs` INTEGER NOT NULL, `availableAtEpochMs` INTEGER NOT NULL, `kind` TEXT NOT NULL, `episodeHandle` TEXT, `materialRevision` INTEGER, `publicPayloadJson` TEXT NOT NULL, PRIMARY KEY(`sessionId`, `eventId`))",
+        "fields": [
+          {
+            "fieldPath": "eventId",
+            "columnName": "eventId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "occurredAtEpochMs",
+            "columnName": "occurredAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "availableAtEpochMs",
+            "columnName": "availableAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kind",
+            "columnName": "kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "episodeHandle",
+            "columnName": "episodeHandle",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "materialRevision",
+            "columnName": "materialRevision",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "publicPayloadJson",
+            "columnName": "publicPayloadJson",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sessionId",
+            "eventId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_context_event_sessionId",
+            "unique": false,
+            "columnNames": [
+              "sessionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_context_event_sessionId` ON `${TABLE_NAME}` (`sessionId`)"
+          },
+          {
+            "name": "index_context_event_availableAtEpochMs",
+            "unique": false,
+            "columnNames": [
+              "availableAtEpochMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_context_event_availableAtEpochMs` ON `${TABLE_NAME}` (`availableAtEpochMs`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "observation",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`observationId` TEXT NOT NULL, `sessionId` TEXT NOT NULL, `captureId` TEXT, `occurredAtEpochMs` INTEGER NOT NULL, `availableAtEpochMs` INTEGER NOT NULL, `kind` TEXT NOT NULL, `assetId` TEXT, `localRelativePath` TEXT, `sha256` TEXT, `width` INTEGER, `height` INTEGER, `rotationDegrees` INTEGER, `qualityJson` TEXT, PRIMARY KEY(`sessionId`, `observationId`))",
+        "fields": [
+          {
+            "fieldPath": "observationId",
+            "columnName": "observationId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "captureId",
+            "columnName": "captureId",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "occurredAtEpochMs",
+            "columnName": "occurredAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "availableAtEpochMs",
+            "columnName": "availableAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kind",
+            "columnName": "kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "assetId",
+            "columnName": "assetId",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "localRelativePath",
+            "columnName": "localRelativePath",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "sha256",
+            "columnName": "sha256",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "width",
+            "columnName": "width",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "height",
+            "columnName": "height",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "rotationDegrees",
+            "columnName": "rotationDegrees",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "qualityJson",
+            "columnName": "qualityJson",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sessionId",
+            "observationId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_observation_sessionId",
+            "unique": false,
+            "columnNames": [
+              "sessionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_observation_sessionId` ON `${TABLE_NAME}` (`sessionId`)"
+          },
+          {
+            "name": "index_observation_availableAtEpochMs",
+            "unique": false,
+            "columnNames": [
+              "availableAtEpochMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_observation_availableAtEpochMs` ON `${TABLE_NAME}` (`availableAtEpochMs`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "sensor_window",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`windowId` TEXT NOT NULL, `sessionId` TEXT NOT NULL, `windowStartElapsedMs` INTEGER NOT NULL, `windowEndElapsedMs` INTEGER NOT NULL, `sampleCount` INTEGER NOT NULL, `motionJson` TEXT NOT NULL, `speechRatio` REAL, `rawAudioStored` INTEGER NOT NULL, PRIMARY KEY(`sessionId`, `windowId`))",
+        "fields": [
+          {
+            "fieldPath": "windowId",
+            "columnName": "windowId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "windowStartElapsedMs",
+            "columnName": "windowStartElapsedMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "windowEndElapsedMs",
+            "columnName": "windowEndElapsedMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sampleCount",
+            "columnName": "sampleCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "motionJson",
+            "columnName": "motionJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "speechRatio",
+            "columnName": "speechRatio",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "rawAudioStored",
+            "columnName": "rawAudioStored",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sessionId",
+            "windowId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_sensor_window_sessionId",
+            "unique": false,
+            "columnNames": [
+              "sessionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_sensor_window_sessionId` ON `${TABLE_NAME}` (`sessionId`)"
+          },
+          {
+            "name": "index_sensor_window_windowEndElapsedMs",
+            "unique": false,
+            "columnNames": [
+              "windowEndElapsedMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_sensor_window_windowEndElapsedMs` ON `${TABLE_NAME}` (`windowEndElapsedMs`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "episode",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`episodeHandle` TEXT NOT NULL, `sessionId` TEXT NOT NULL, `objectHandle` TEXT NOT NULL, `intentFingerprint` TEXT NOT NULL, `serviceMode` TEXT NOT NULL, `schedulerEligible` INTEGER NOT NULL, `materialRevision` INTEGER NOT NULL, `schedulerPrivateJson` TEXT NOT NULL, PRIMARY KEY(`sessionId`, `episodeHandle`))",
+        "fields": [
+          {
+            "fieldPath": "episodeHandle",
+            "columnName": "episodeHandle",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "objectHandle",
+            "columnName": "objectHandle",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "intentFingerprint",
+            "columnName": "intentFingerprint",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "serviceMode",
+            "columnName": "serviceMode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "schedulerEligible",
+            "columnName": "schedulerEligible",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "materialRevision",
+            "columnName": "materialRevision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "schedulerPrivateJson",
+            "columnName": "schedulerPrivateJson",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sessionId",
+            "episodeHandle"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_episode_sessionId",
+            "unique": false,
+            "columnNames": [
+              "sessionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_episode_sessionId` ON `${TABLE_NAME}` (`sessionId`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "anchor_candidate",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`anchorId` TEXT NOT NULL, `sessionId` TEXT NOT NULL, `anchorTimeEpochMs` INTEGER NOT NULL, `triggerObservationId` TEXT NOT NULL, `currentAssetId` TEXT NOT NULL, `objectHandle` TEXT NOT NULL, `episodeHandle` TEXT NOT NULL, `score` REAL NOT NULL, `triggerFamiliesJson` TEXT NOT NULL, `schedulerDiagnosticsPrivateJson` TEXT NOT NULL, PRIMARY KEY(`sessionId`, `anchorId`))",
+        "fields": [
+          {
+            "fieldPath": "anchorId",
+            "columnName": "anchorId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "anchorTimeEpochMs",
+            "columnName": "anchorTimeEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "triggerObservationId",
+            "columnName": "triggerObservationId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "currentAssetId",
+            "columnName": "currentAssetId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "objectHandle",
+            "columnName": "objectHandle",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "episodeHandle",
+            "columnName": "episodeHandle",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "score",
+            "columnName": "score",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "triggerFamiliesJson",
+            "columnName": "triggerFamiliesJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "schedulerDiagnosticsPrivateJson",
+            "columnName": "schedulerDiagnosticsPrivateJson",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sessionId",
+            "anchorId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_anchor_candidate_sessionId",
+            "unique": false,
+            "columnNames": [
+              "sessionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_anchor_candidate_sessionId` ON `${TABLE_NAME}` (`sessionId`)"
+          },
+          {
+            "name": "index_anchor_candidate_anchorTimeEpochMs",
+            "unique": false,
+            "columnNames": [
+              "anchorTimeEpochMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_anchor_candidate_anchorTimeEpochMs` ON `${TABLE_NAME}` (`anchorTimeEpochMs`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "inference_request",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`requestId` TEXT NOT NULL, `sessionId` TEXT NOT NULL, `anchorId` TEXT NOT NULL, `requestedAtEpochMs` INTEGER NOT NULL, `requestJson` TEXT NOT NULL, `promptHash` TEXT NOT NULL, `preprocessHash` TEXT NOT NULL, PRIMARY KEY(`sessionId`, `requestId`))",
+        "fields": [
+          {
+            "fieldPath": "requestId",
+            "columnName": "requestId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "anchorId",
+            "columnName": "anchorId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "requestedAtEpochMs",
+            "columnName": "requestedAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "requestJson",
+            "columnName": "requestJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "promptHash",
+            "columnName": "promptHash",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "preprocessHash",
+            "columnName": "preprocessHash",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sessionId",
+            "requestId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_inference_request_sessionId",
+            "unique": false,
+            "columnNames": [
+              "sessionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_inference_request_sessionId` ON `${TABLE_NAME}` (`sessionId`)"
+          },
+          {
+            "name": "index_inference_request_anchorId",
+            "unique": false,
+            "columnNames": [
+              "anchorId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_inference_request_anchorId` ON `${TABLE_NAME}` (`anchorId`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "decision",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`decisionId` TEXT NOT NULL, `sessionId` TEXT NOT NULL, `anchorId` TEXT NOT NULL, `requestId` TEXT NOT NULL, `rawResponseJson` TEXT NOT NULL, `rawLabel` TEXT NOT NULL, `producedAtEpochMs` INTEGER NOT NULL, `expiresAtEpochMs` INTEGER NOT NULL, PRIMARY KEY(`sessionId`, `decisionId`))",
+        "fields": [
+          {
+            "fieldPath": "decisionId",
+            "columnName": "decisionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "anchorId",
+            "columnName": "anchorId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "requestId",
+            "columnName": "requestId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rawResponseJson",
+            "columnName": "rawResponseJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rawLabel",
+            "columnName": "rawLabel",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "producedAtEpochMs",
+            "columnName": "producedAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "expiresAtEpochMs",
+            "columnName": "expiresAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sessionId",
+            "decisionId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_decision_sessionId",
+            "unique": false,
+            "columnNames": [
+              "sessionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_decision_sessionId` ON `${TABLE_NAME}` (`sessionId`)"
+          },
+          {
+            "name": "index_decision_anchorId",
+            "unique": false,
+            "columnNames": [
+              "anchorId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_decision_anchorId` ON `${TABLE_NAME}` (`anchorId`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "delivery",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`deliveryId` TEXT NOT NULL, `sessionId` TEXT NOT NULL, `decisionId` TEXT NOT NULL, `finalStatus` TEXT NOT NULL, `reason` TEXT NOT NULL, `sentAtEpochMs` INTEGER, `visibleAtEpochMs` INTEGER, `dismissedAtEpochMs` INTEGER, PRIMARY KEY(`sessionId`, `deliveryId`))",
+        "fields": [
+          {
+            "fieldPath": "deliveryId",
+            "columnName": "deliveryId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "decisionId",
+            "columnName": "decisionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "finalStatus",
+            "columnName": "finalStatus",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "reason",
+            "columnName": "reason",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sentAtEpochMs",
+            "columnName": "sentAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "visibleAtEpochMs",
+            "columnName": "visibleAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "dismissedAtEpochMs",
+            "columnName": "dismissedAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sessionId",
+            "deliveryId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_delivery_sessionId",
+            "unique": false,
+            "columnNames": [
+              "sessionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_delivery_sessionId` ON `${TABLE_NAME}` (`sessionId`)"
+          },
+          {
+            "name": "index_delivery_decisionId",
+            "unique": false,
+            "columnNames": [
+              "decisionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_delivery_decisionId` ON `${TABLE_NAME}` (`decisionId`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "action_receipt",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`receiptId` TEXT NOT NULL, `sessionId` TEXT NOT NULL, `decisionId` TEXT NOT NULL, `episodeHandle` TEXT NOT NULL, `objectHandle` TEXT NOT NULL, `intentFingerprint` TEXT NOT NULL, `serviceMode` TEXT NOT NULL, `servedMaterialRevision` INTEGER NOT NULL, `visibleAtEpochMs` INTEGER NOT NULL, `evidenceIdsJson` TEXT NOT NULL, PRIMARY KEY(`sessionId`, `receiptId`))",
+        "fields": [
+          {
+            "fieldPath": "receiptId",
+            "columnName": "receiptId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "decisionId",
+            "columnName": "decisionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "episodeHandle",
+            "columnName": "episodeHandle",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "objectHandle",
+            "columnName": "objectHandle",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "intentFingerprint",
+            "columnName": "intentFingerprint",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "serviceMode",
+            "columnName": "serviceMode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "servedMaterialRevision",
+            "columnName": "servedMaterialRevision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "visibleAtEpochMs",
+            "columnName": "visibleAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "evidenceIdsJson",
+            "columnName": "evidenceIdsJson",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sessionId",
+            "receiptId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_action_receipt_sessionId",
+            "unique": false,
+            "columnNames": [
+              "sessionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_action_receipt_sessionId` ON `${TABLE_NAME}` (`sessionId`)"
+          },
+          {
+            "name": "index_action_receipt_episodeHandle",
+            "unique": false,
+            "columnNames": [
+              "episodeHandle"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_action_receipt_episodeHandle` ON `${TABLE_NAME}` (`episodeHandle`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "audit_event",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`auditId` TEXT NOT NULL, `sessionId` TEXT NOT NULL, `sequenceNumber` INTEGER NOT NULL, `eventType` TEXT NOT NULL, `eventAtEpochMs` INTEGER NOT NULL, `payloadHash` TEXT NOT NULL, `previousHash` TEXT NOT NULL, `chainHash` TEXT NOT NULL, PRIMARY KEY(`sessionId`, `auditId`))",
+        "fields": [
+          {
+            "fieldPath": "auditId",
+            "columnName": "auditId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sequenceNumber",
+            "columnName": "sequenceNumber",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "eventType",
+            "columnName": "eventType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "eventAtEpochMs",
+            "columnName": "eventAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payloadHash",
+            "columnName": "payloadHash",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "previousHash",
+            "columnName": "previousHash",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chainHash",
+            "columnName": "chainHash",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sessionId",
+            "auditId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_audit_event_sessionId",
+            "unique": false,
+            "columnNames": [
+              "sessionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_audit_event_sessionId` ON `${TABLE_NAME}` (`sessionId`)"
+          },
+          {
+            "name": "index_audit_event_sequenceNumber",
+            "unique": false,
+            "columnNames": [
+              "sequenceNumber"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_audit_event_sequenceNumber` ON `${TABLE_NAME}` (`sequenceNumber`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "journal",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`sessionId` TEXT NOT NULL, `sequence` INTEGER NOT NULL, `stream` TEXT NOT NULL, `eventType` TEXT NOT NULL, `eventAtEpochMs` INTEGER NOT NULL, `canonicalJson` TEXT NOT NULL, `payloadSha256` TEXT NOT NULL, `previousHash` TEXT NOT NULL, `chainHash` TEXT NOT NULL, PRIMARY KEY(`sessionId`, `sequence`))",
+        "fields": [
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sequence",
+            "columnName": "sequence",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "stream",
+            "columnName": "stream",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "eventType",
+            "columnName": "eventType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "eventAtEpochMs",
+            "columnName": "eventAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "canonicalJson",
+            "columnName": "canonicalJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payloadSha256",
+            "columnName": "payloadSha256",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "previousHash",
+            "columnName": "previousHash",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chainHash",
+            "columnName": "chainHash",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sessionId",
+            "sequence"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_journal_sessionId_stream",
+            "unique": false,
+            "columnNames": [
+              "sessionId",
+              "stream"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_journal_sessionId_stream` ON `${TABLE_NAME}` (`sessionId`, `stream`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "runtime_checkpoint",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`sessionId` TEXT NOT NULL, `epoch` INTEGER NOT NULL, `state` TEXT NOT NULL, `updatedAtEpochMs` INTEGER NOT NULL, `stateJson` TEXT NOT NULL, PRIMARY KEY(`sessionId`))",
+        "fields": [
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "epoch",
+            "columnName": "epoch",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtEpochMs",
+            "columnName": "updatedAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "stateJson",
+            "columnName": "stateJson",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sessionId"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      }
+    ],
+    "views": [],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '7c673b7f439f29645cc82743270b6756')"
+    ]
+  }
+}

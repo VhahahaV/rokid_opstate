@@ -1,0 +1,64 @@
+{
+  "schema_version": "study_scenario_v2",
+  "scenario_id": "meeting_move_phone_v4",
+  "title": "Meeting location change",
+  "participant_visible_events": [
+    {
+      "event_id": "evt_calendar_meeting",
+      "kind": "CALENDAR",
+      "occurred_at_offset_ms": -86400000,
+      "available_at_offset_ms": -86400000,
+      "episode_handle": "ep_8f0c",
+      "material_revision": 0,
+      "public_text": "Team meeting on {{meeting_date}} at {{meeting_time}}.",
+      "runtime_delivery": "PRELOAD_HISTORY",
+      "material_change_for_scheduler": false
+    },
+    {
+      "event_id": "evt_message_room_change",
+      "kind": "MESSAGE",
+      "occurred_at_offset_ms": 10000,
+      "available_at_offset_ms": 10000,
+      "episode_handle": "ep_8f0c",
+      "material_revision": 1,
+      "public_text": "Meeting moved to B302.",
+      "runtime_delivery": "SHOW_CONTEXT_CARD",
+      "material_change_for_scheduler": true
+    },
+    {
+      "event_id": "evt_message_earlier_start",
+      "kind": "MESSAGE",
+      "occurred_at_offset_ms": 100000,
+      "available_at_offset_ms": 100000,
+      "episode_handle": "ep_8f0c",
+      "material_revision": 2,
+      "public_text": "The meeting has moved earlier. Please check the updated start time before leaving.",
+      "runtime_delivery": "SHOW_CONTEXT_CARD",
+      "material_change_for_scheduler": true
+    }
+  ],
+  "candidate_episodes": [
+    {
+      "object_handle": "obj_19a1",
+      "episode_handle": "ep_8f0c",
+      "intent_fingerprint": "intent_2c91",
+      "service_mode": "PREPARATION",
+      "scheduler_eligible": true,
+      "material_revision": 0,
+      "deadline_offset_ms": 720000,
+      "scheduler_trigger_keys": [
+        "surface:door",
+        "transition:work_to_departure"
+      ]
+    }
+  ],
+  "operator_setup": {
+    "required_props": [
+      "laptop",
+      "bag",
+      "door_or_exit_boundary"
+    ],
+    "participant_task": "Continue desk work, then prepare to leave for the meeting.",
+    "reset": "Return laptop and bag to their initial positions; clear all cards and receipts."
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "schemas/sensor_window.schema.json": ["tests/fixtures/sample_sensor_window.json"],
+  "schemas/anchor_candidate.schema.json": ["tests/fixtures/sample_anchor_candidate.json"],
+  "schemas/action_receipt.schema.json": ["tests/fixtures/sample_action_receipt.json"],
+  "schemas/inference_request.schema.json": ["tests/fixtures/sample_inference_request.json"],
+  "schemas/inference_response.schema.json": [
+    "tests/fixtures/sample_service_response.json",
+    "tests/fixtures/sample_no_service_response.json"
+  ],
+  "schemas/device_message.schema.json": ["tests/fixtures/sample_device_message.json"],
+  "schemas/study_scenario.schema.json": ["configs/scenario.meeting_move.example.json"]
+}

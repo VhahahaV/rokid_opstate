@@ -1,0 +1,37 @@
+{
+  "protocol_version": "opstate-online-v1",
+  "request_id": "request-demo",
+  "anchor_id": "anchor-demo",
+  "anchor_time_epoch_ms": 1800000000000,
+  "current_asset_id": "asset-image-120",
+  "current_image_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "candidate": {
+    "object_handle": "obj_19a1",
+    "episode_handle": "ep_8f0c"
+  },
+  "observations": [
+    {
+      "observation_id": "obs-message-move",
+      "kind": "SYNTHETIC_CONTEXT",
+      "occurred_at_epoch_ms": 1799999400000,
+      "available_at_epoch_ms": 1799999400000,
+      "content": "The meeting was moved to room B302.",
+      "asset_id": null,
+      "episode_handle": "ep_8f0c",
+      "material_revision": 1
+    },
+    {
+      "observation_id": "obs-image-120",
+      "kind": "IMAGE",
+      "occurred_at_epoch_ms": 1800000000000,
+      "available_at_epoch_ms": 1800000000200,
+      "content": "Egocentric image observation; see current asset.",
+      "asset_id": "asset-image-120",
+      "episode_handle": null,
+      "material_revision": null
+    }
+  ],
+  "receipts": [],
+  "prompt_hash": "prompt-sha256-demo",
+  "preprocess_hash": "preprocess-sha256-demo"
+}

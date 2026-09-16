@@ -1,0 +1,23 @@
+{
+  "schema_version": "model_endpoint_v1",
+  "base_url": "https://REPLACE.example",
+  "evaluate_path": "/v1/evaluate",
+  "observe_path": "/v1/observe",
+  "auth": {
+    "type": "bearer_from_android_keystore",
+    "token_alias": "opstate_harness_token"
+  },
+  "frozen": {
+    "model_id": "REPLACE_WITH_FROZEN_MODEL_ID",
+    "prompt_sha256": "REPLACE_WITH_PROMPT_SHA256",
+    "preprocess_sha256": "REPLACE_WITH_PREPROCESS_SHA256",
+    "parser_sha256": "REPLACE_WITH_PARSER_SHA256"
+  },
+  "timeouts_ms": {
+    "connect": 5000,
+    "write": 10000,
+    "read": 12000,
+    "call": 15000
+  },
+  "fallback_model": null
+}

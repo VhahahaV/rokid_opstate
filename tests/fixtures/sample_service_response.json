@@ -1,0 +1,11 @@
+{
+  "request_id": "request-demo",
+  "decision_id": "decision-demo",
+  "decision": "SERVICE",
+  "service_mode": "PREPARATION",
+  "title": "Head to B302",
+  "body": "The meeting moved to B302; leaving now gives enough walking time.",
+  "evidence_observation_ids": ["obs-message-move"],
+  "produced_at_epoch_ms": 1800000002000,
+  "expires_at_epoch_ms": 1800000022000
+}

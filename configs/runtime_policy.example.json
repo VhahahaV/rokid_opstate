@@ -1,0 +1,64 @@
+{
+  "schema_version": "runtime_policy_v1",
+  "mode": "BENCHMARK_ALIGNED",
+  "capture": {
+    "baseline_interval_ms": 60000,
+    "max_staleness_ms": 90000,
+    "min_capture_interval_ms": 15000,
+    "material_change_delay_ms": 3000,
+    "transition_lookback_ms": 20000,
+    "width": 1280,
+    "height": 720,
+    "jpeg_quality": 80,
+    "bad_image_retry_count": 1,
+    "camera_warmup_ms": 1200
+  },
+  "sensors": {
+    "imu_nominal_hz": 50,
+    "motion_window_ms": 4000,
+    "summary_interval_ms": 1000,
+    "stable_angular_rms_deg_s": 2.5,
+    "stable_linear_accel_rms_m_s2": 0.18,
+    "moving_angular_rms_deg_s": 12.0,
+    "moving_linear_accel_rms_m_s2": 0.6,
+    "min_stable_ratio": 0.75,
+    "vad_enabled": false,
+    "vad_window_ms": 2500,
+    "max_speech_ratio": 0.35,
+    "raw_audio_retained": false
+  },
+  "anchor": {
+    "min_evaluation_interval_ms": 30000,
+    "emit_threshold": 0.45,
+    "max_anchors_per_observation": 3,
+    "require_stable_pose": true,
+    "allow_transition_settled": true,
+    "allow_periodic_coverage": true,
+    "allow_visual_novelty": true,
+    "min_visual_novelty": 0.12,
+    "min_image_luma": 18.0,
+    "max_image_luma": 238.0,
+    "min_blur_score": 25.0
+  },
+  "inference": {
+    "endpoint": "https://REPLACE.example/v1/evaluate",
+    "call_timeout_ms": 15000,
+    "decision_ttl_ms": 20000,
+    "allow_model_fallback": false,
+    "send_scheduler_diagnostics": false,
+    "send_private_lifecycle": false
+  },
+  "delivery": {
+    "visible_ack_required": true,
+    "visible_ack_min_frames": 2,
+    "service_card_visible_ms": 10000,
+    "no_service_is_silence": true
+  },
+  "retention": {
+    "store_raw_audio": false,
+    "store_raw_imu": false,
+    "store_images": true,
+    "delete_images_after_export": false,
+    "max_local_sessions": 20
+  }
+}

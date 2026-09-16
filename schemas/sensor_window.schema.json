@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opstate.local/schema/sensor_window.schema.json",
+  "type": "object",
+  "required": [
+    "window_start_elapsed_ms", "window_end_elapsed_ms", "sample_count",
+    "angular_velocity_rms_deg_s", "linear_acceleration_rms_m_s2",
+    "stable_ratio", "is_stable", "is_moving"
+  ],
+  "properties": {
+    "window_start_elapsed_ms": {"type": "integer", "minimum": 0},
+    "window_end_elapsed_ms": {"type": "integer", "minimum": 0},
+    "sample_count": {"type": "integer", "minimum": 0},
+    "angular_velocity_rms_deg_s": {"type": "number", "minimum": 0},
+    "angular_velocity_p95_deg_s": {"type": "number", "minimum": 0},
+    "linear_acceleration_rms_m_s2": {"type": "number", "minimum": 0},
+    "linear_acceleration_p95_m_s2": {"type": "number", "minimum": 0},
+    "stable_ratio": {"type": "number", "minimum": 0, "maximum": 1},
+    "is_stable": {"type": "boolean"},
+    "is_moving": {"type": "boolean"},
+    "speech_ratio": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "raw_audio_stored": {"const": false}
+  },
+  "additionalProperties": false
+}
