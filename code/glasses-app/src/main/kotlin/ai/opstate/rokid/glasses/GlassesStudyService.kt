@@ -21,6 +21,16 @@ import java.net.NetworkInterface
 import java.io.File
 import java.util.UUID
 
+/**
+ * Tick period with no active session. Capture scheduling and card expiry need the fine period, but a
+ * connected-and-idle glasses only watches for the camera and a lost heartbeat, so it can idle slowly.
+ */
+private const val IDLE_TICK_MS=2_000L
+private const val ACTIVE_TICK_MS=250L
+
+/** Periodic refresh of an unchanged buffer status; every real change is sent immediately. */
+private const val STATUS_REFRESH_MS=5_000L
+
 /** One actor owns commands/session/cards. Capture and transfer run as correlated child jobs. */
 class GlassesStudyService : Service() {
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
@@ -68,6 +78,7 @@ class GlassesStudyService : Service() {
     private var localTrigger=StreamingPacketizer()
     private var pendingTrigger=setOf<String>()
     private var lastBufferStatus=0L
+    private var lastStatusSignature=""
     private var bufferError: String?=null
     private var wakeLock: PowerManager.WakeLock?=null
     private sealed class Event {
@@ -119,7 +130,7 @@ class GlassesStudyService : Service() {
             val result=runCatching { camera.openLowResolutionPreview();camera.close() }
             inbox.send(Event.CameraReady(result.exceptionOrNull()?.javaClass?.simpleName))
         }
-        scope.launch { while(isActive) { delay(250); inbox.send(Event.Tick) } }
+        scope.launch { while(isActive) { delay(if(activeSession!=null) ACTIVE_TICK_MS else IDLE_TICK_MS); inbox.send(Event.Tick) } }
     }
     override fun onStartCommand(intent: Intent?,flags: Int,startId: Int)=START_NOT_STICKY
     override fun onBind(intent: Intent?)=null
@@ -190,6 +201,9 @@ class GlassesStudyService : Service() {
                 automatic=p["automatic"]?.jsonPrimitive?.boolean ?: true
                 if(nextCaptureElapsed==0L) nextCaptureElapsed=SystemClock.elapsedRealtime()
                 if(automatic) wakeLock?.acquire() else wakeLock?.takeIf {it.isHeld}?.release()
+                // Motion summaries only feed the SERVICE path (kickModel and the scheduler snapshot are
+                // both SERVICE-gated), so COLLECTION does not pay for three sensors at ~50 Hz.
+                if(mode=="SERVICE") imu.start() else imu.stop()
                 // Retained originals from an interrupted collection are recovered into the next collection.
                 flushing=flushing || (mode=="COLLECTION" && buffer.entries().any {it.descriptor.session_id!=activeSession})
                 sendBufferStatus()
@@ -332,7 +346,9 @@ class GlassesStudyService : Service() {
             }
             if(!heartbeatLost) {
                 syncNext(now)
-                if(now-lastBufferStatus>=1_000) sendBufferStatus()
+                // A changed status (pending/capturing/automatic/…) goes out at once; an unchanged one
+                // only refreshes periodically, which mostly feeds the phone's countdown display.
+                if(statusSignature()!=lastStatusSignature || now-lastBufferStatus>=STATUS_REFRESH_MS) sendBufferStatus()
             } else updateBufferUi()
             if((automatic && !paused) || flushing) wakeLock?.acquire() else wakeLock?.takeIf {it.isHeld}?.release()
         }
@@ -340,9 +356,11 @@ class GlassesStudyService : Service() {
     private fun eligiblePhotos()=buffer.entries().filter {autonomousMode=="COLLECTION" || it.descriptor.session_id==activeSession}
     private fun updateBufferUi() {graph.mutableUi.update {it.copy(bufferedPhotos=eligiblePhotos().size,localCaptures=capturedCount,
         collectingLocally=autonomousMode=="COLLECTION" && automatic && !paused,setupError=bufferError)}}
+    /** Everything the phone acts on; excludes the volatile countdown so steady state compares equal. */
+    private fun statusSignature()="$capturedCount/${eligiblePhotos().size}/${captureId!=null}/$automatic/$flushing/$bufferError"
     private suspend fun sendBufferStatus() {
         if(autonomousMode==null) return
-        lastBufferStatus=SystemClock.elapsedRealtime();updateBufferUi()
+        lastBufferStatus=SystemClock.elapsedRealtime();updateBufferUi();lastStatusSignature=statusSignature()
         send("CAPTURE_BUFFER_STATUS",StudyWire.payload("captured" to capturedCount,"pending" to eligiblePhotos().size,"batch_size" to batchSize,
             "free_bytes" to buffer.freeBytes,"capturing" to (captureId!=null),"automatic" to automatic,"syncing" to flushing,
             "next_capture_in_ms" to (nextCaptureElapsed-SystemClock.elapsedRealtime()).coerceAtLeast(0),"error" to bufferError))
@@ -365,7 +383,7 @@ class GlassesStudyService : Service() {
             "certificate_pem" to server.certificatePem,"certificate_sha256" to server.certificateSha256)))
     }
     private suspend fun sensor(window: MotionWindowSummary) {
-        if(activeSession==null || heartbeatLost) return
+        if(activeSession==null || heartbeatLost || autonomousMode!="SERVICE") return
         send("SENSOR_SUMMARY",StudyWire.payload(
             "window_start_elapsed_ms" to window.startElapsedMs,"window_end_elapsed_ms" to window.endElapsedMs,
             "sample_count" to window.sampleCount,"angular_rms" to window.angularRms,"angular_p95" to window.angularP95,
@@ -462,6 +480,7 @@ class GlassesStudyService : Service() {
         captureJob?.cancel(); transferJob?.cancel(); captureId=null
         imageSender=null;paused=false
         autonomousMode=null;automatic=true;nextCaptureElapsed=0;offeredId=null;flushing=false;capturedCount=0
+        lastStatusSignature=""
         localTrigger=StreamingPacketizer();pendingTrigger=emptySet();bufferError=null
         wakeLock?.takeIf {it.isHeld}?.release()
         images?.close(); images=null

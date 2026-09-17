@@ -151,7 +151,10 @@ class AndroidCameraSession(context: Context) : WarmCameraSession {
         val nv21=ByteArray(width*height*3/2)
         val y=image.planes[0];val u=image.planes[1];val v=image.planes[2]
         val yBuffer=y.buffer;val uBuffer=u.buffer;val vBuffer=v.buffer
-        for(row in 0 until height) for(col in 0 until width) nv21[row*width+col]=yBuffer.get(row*y.rowStride+col*y.pixelStride)
+        // A row of luma is contiguous whenever pixelStride is 1, so copy it in one bulk get instead of
+        // width individual reads: 720 calls per frame rather than 921,600.
+        if(y.pixelStride==1) for(row in 0 until height) {yBuffer.position(row*y.rowStride);yBuffer.get(nv21,row*width,width)}
+        else for(row in 0 until height) for(col in 0 until width) nv21[row*width+col]=yBuffer.get(row*y.rowStride+col*y.pixelStride)
         for(row in 0 until height/2) for(col in 0 until width/2) {
             val index=width*height+row*width+col*2
             nv21[index]=vBuffer.get(row*v.rowStride+col*v.pixelStride)

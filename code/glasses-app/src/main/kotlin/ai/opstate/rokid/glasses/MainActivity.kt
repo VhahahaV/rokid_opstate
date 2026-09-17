@@ -33,6 +33,8 @@ class MainActivity : Activity() {
     private var displayed: GlassesCard?=null
     private var lastState: GlassesUiState?=null
     private var demoCollapsed=false
+    // Collection status is passive: it still renders, but must not hold the panel lit for a whole session.
+    private var passiveStatus=false
     private var choosingPhone=false
     private var phoneIndex=0
     private var pairingHint="在手机打开蓝牙设置，使手机可被发现"
@@ -95,7 +97,7 @@ class MainActivity : Activity() {
         lastState=state
         if(state.card!=null && displayed==state.card && previous?.sessionId==state.sessionId && previous?.running==true && state.running) return
         visible?.close(); visible=null
-        content.removeAllViews(); displayed=state.card
+        content.removeAllViews(); displayed=state.card; passiveStatus=false
         val card=state.card
         if(card!=null) {
             text(when(card.kind) {"SERVICE"->"OPSTATE  /  主动服务";"STATUS"->"OPSTATE  /  会话状态";else->"OPSTATE  /  情境更新"},15f,Color.rgb(136,255,227),1)
@@ -125,6 +127,7 @@ class MainActivity : Activity() {
         } else if(state.demoStatus!=null) {
             val demo=state.demoStatus
             if(demo.collection) {
+                passiveStatus=true
                 if(!demoCollapsed) {
                     text("OPSTATE · 采集",14f,Color.rgb(136,255,227),1)
                     text(demo.phase,24f,Color.WHITE,2,bold=true)
@@ -150,7 +153,9 @@ class MainActivity : Activity() {
     }
     private fun updateDisplayPolicy() {
         val showing=content.childCount>0
-        if(showing) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // A card holds the panel lit because its visible ACK needs the screen to stay interactive; the
+        // passive collection status does not, so the system timeout is allowed to blank it.
+        if(showing && !passiveStatus) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         window.attributes=window.attributes.apply {
             screenBrightness=if(showing) WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE else 0f
@@ -209,6 +214,8 @@ class MainActivity : Activity() {
             receiverRegistered=true
         }
         if(bluetooth?.isEnabled!=true) {pairingHint="请先在系统设置中打开蓝牙";renderPhones();return}
+        // Advertise the CXR BLE service so the phone's UUID-filtered scan can actually see us.
+        graph.link.startBTPairing()
         bluetooth.bondedDevices.forEach {phones[it.address]=it}
         pairingHint="在手机打开蓝牙设置；滑动选择，轻触配对"
         if(!bluetooth.startDiscovery()) pairingHint="搜索未启动，可选择已配对手机或打开系统配对"

@@ -12,7 +12,10 @@ class PhotoBuffer(private val directory: File) {
     data class Entry(val descriptor: ImageDescriptor,val metadata: JsonObject,val file: File)
     init {check(directory.isDirectory || directory.mkdirs()) {"BUFFER_DIRECTORY_UNAVAILABLE"}}
     private val index=readEntries().associateBy {it.descriptor.capture_id}.toMutableMap()
-    fun entries(): List<Entry> = index.values.sortedWith(compareBy({it.descriptor.captured_at_epoch_ms},{it.descriptor.capture_id}))
+    // entries() is polled about once a second by the buffer-status path, so the sort is cached and
+    // dropped on mutation instead of re-sorting the whole queue on every call.
+    private var sorted: List<Entry>?=null
+    fun entries(): List<Entry> = sorted ?: index.values.sortedWith(compareBy({it.descriptor.captured_at_epoch_ms},{it.descriptor.capture_id})).also {sorted=it}
     private fun readEntries(): List<Entry> = directory.listFiles().orEmpty().filter {it.extension=="json"}.map {manifest->
         val row=StudyWire.json.parseToJsonElement(AtomicFile(manifest).readFully().toString(Charsets.UTF_8)).jsonObject
         val descriptor=StudyWire.json.decodeFromJsonElement<ImageDescriptor>(row.getValue("image"))
@@ -28,14 +31,14 @@ class PhotoBuffer(private val directory: File) {
         if(target.exists()) check(StudyWire.sha256(target.readBytes())==descriptor.sha256) {"BUFFER_ID_COLLISION"}
         else write(target,jpeg)
         write(file(descriptor.capture_id,"json"),StudyWire.payload("image" to StudyWire.json.encodeToJsonElement(descriptor),"metadata" to metadata).toString().toByteArray())
-        return Entry(descriptor,metadata,target).also {index[descriptor.capture_id]=it}
+        return Entry(descriptor,metadata,target).also {index[descriptor.capture_id]=it;sorted=null}
     }
     fun commit(id: String,sha: String,length: Int): Boolean {
         val entry=entries().firstOrNull {it.descriptor.capture_id==id} ?: return false
         require(entry.descriptor.sha256==sha && entry.descriptor.byte_length==length) {"BUFFER_COMMIT_MISMATCH"}
         // Delete manifest first: a crash may leave an unreferenced JPEG, never a dangling committed entry.
         check(file(id,"json").delete()) {"BUFFER_COMMIT_FAILED"}
-        index.remove(id)
+        index.remove(id);sorted=null
         check(entry.file.delete()) {"BUFFER_IMAGE_DELETE_FAILED"}
         return true
     }
