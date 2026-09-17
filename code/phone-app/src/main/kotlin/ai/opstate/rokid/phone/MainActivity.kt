@@ -64,6 +64,17 @@ class MainActivity : ComponentActivity() {
         viewState.update { it.copy(endpoint=endpoint,expectedModelId=graph.settings.getString("expected_model_id","").orEmpty(),directModel=graph.modelConfig(),syncBatchSetting=graph.settings.getInt("sync_batch_size",60)) }
         scope.launch { graph.link.state.collect { link -> viewState.update { it.copy(link=link,sdkIdentityCached=graph.link.hasDeviceIdentity()) } } }
         scope.launch { graph.transport.ready.collect { ready -> viewState.update { it.copy(peerReady=ready) } } }
+        scope.launch {
+            // Losing the link by walking out of range must not need an operator to retry by hand. Rebuilding
+            // the saved device here also arms the transport's unbounded reconnect loop, so a launch while
+            // still out of range keeps trying instead of going quiet.
+            val saved=graph.link.savedDevice() ?: return@launch
+            val authorized=withContext(Dispatchers.IO) {runCatching {
+                graph.credentials.clientSecret()!=null && graph.credentials.licenseBytes()!=null
+            }.getOrDefault(false)}
+            if(!authorized) return@launch
+            runCatching { graph.transport.connect(ai.opstate.rokid.phone.transport.RokidDevice(saved.address,saved.name)) }
+        }
         scope.launch { graph.database.dao().observeSessions().collect { sessions ->
             val collections=withContext(Dispatchers.IO) {LocalCollectionRepository(graph.journal).list()}
             viewState.update { it.copy(sessions=sessions,collections=collections) }

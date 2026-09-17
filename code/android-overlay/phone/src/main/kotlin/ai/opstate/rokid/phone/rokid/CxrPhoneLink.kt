@@ -51,6 +51,13 @@ class CxrPhoneLink(context: Context, private val credentials: CxrCredentialsProv
     @Volatile private var generation = 0L
     @Volatile private var p2pGeneration = 0L
     private var wifiDirect: StudyWifiDirect?=null
+    /**
+     * Set when a saved socket identity fails to connect, so the next attempt re-runs the official BLE
+     * initialization instead of the saved fast path. The saved identity is deliberately kept: a socket
+     * failure is usually transient (out of range), and discarding it made reconnection impossible
+     * without the glasses being put back into its physical pairing state.
+     */
+    @Volatile private var identitySuspect = false
 
     private fun requirePermissions() {
         val required = buildList {
@@ -115,6 +122,7 @@ class CxrPhoneLink(context: Context, private val credentials: CxrCredentialsProv
         require(android.bluetooth.BluetoothAdapter.checkBluetoothAddress(address)) { "INVALID_CONNECTION_INFO" }
         check(preferences.edit().putString("socket_uuid",uuid).putString("socket_address",address)
             .putString("selected_address",device.address).putString("selected_name",device.name).commit()) { "CONNECTION_INFO_SAVE_FAILED" }
+        identitySuspect=false
     }
 
     /** Official BLE initialization only. This never calls the licensed data-channel API or reports SDK connected. */
@@ -215,7 +223,7 @@ class CxrPhoneLink(context: Context, private val credentials: CxrCredentialsProv
         try {
             val savedUuid=preferences.getString("socket_uuid",null)
             val savedAddress=preferences.getString("socket_address",null)
-            if (preferences.getString("selected_address",null)==device.address && savedUuid!=null && savedAddress!=null) {
+            if (!identitySuspect && preferences.getString("selected_address",null)==device.address && savedUuid!=null && savedAddress!=null) {
                 authenticate(savedUuid,savedAddress)
             } else {
                 api.initBluetooth(context,manager.adapter.getRemoteDevice(device.address),callback)
@@ -224,9 +232,11 @@ class CxrPhoneLink(context: Context, private val credentials: CxrCredentialsProv
         } catch (error: Exception) {
             generation++
             api.deinitBluetooth()
-            // A new pairing/application can rotate the socket UUID while the Android bond remains valid.
-            // Retain the selected device, but force a fresh official BLE initialization on the next attempt.
-            if(_state.value.errorCode=="CXR_SOCKET_CONNECT_FAILED") preferences.edit().remove("socket_uuid").remove("socket_address").apply()
+            // A new pairing/application can rotate the socket UUID while the Android bond remains valid,
+            // but a socket failure is far more often transient (walked out of range). Never discard the
+            // saved identity; alternate to the fresh official BLE initialization for the next attempt and
+            // back again, so a momentary drop recovers on its own while a rotated UUID is still re-learned.
+            if(_state.value.errorCode=="CXR_SOCKET_CONNECT_FAILED") identitySuspect=!identitySuspect
             _state.value = CxrLinkState(phase="ERROR",errorCode=if(error is TimeoutCancellationException) "BLUETOOTH_CONNECT_TIMEOUT" else _state.value.errorCode ?: "BLUETOOTH_CONNECT_FAILED")
             throw error
         }

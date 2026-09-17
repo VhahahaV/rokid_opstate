@@ -16,6 +16,10 @@ import java.net.Proxy
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
+/** Reconnect pacing. Leaving and re-entering Bluetooth range takes minutes, so retries continue. */
+private const val INITIAL_RECONNECT_BACKOFF_MS=2_000L
+private const val MAX_RECONNECT_BACKOFF_MS=60_000L
+
 /** Maps real CXR messages and P2P bodies into domain events. SDK enqueue is never a display ACK. */
 class LegacyCxrTransport(
     private val link: CxrLinkPort,private val scope: CoroutineScope,
@@ -102,12 +106,15 @@ class LegacyCxrTransport(
         if(reconnectJob?.isActive==true) return
         val device=selected ?: return
         reconnectJob=scope.launch {
-            for(waitMs in listOf(2000L,5000L,10000L)) {
+            // A fixed short retry window used to leave the link permanently dead once the wearer had
+            // been out of range for more than a few seconds, so retry while the transport is enabled.
+            var waitMs=INITIAL_RECONNECT_BACKOFF_MS
+            while(isActive && reconnectEnabled) {
                 delay(waitMs)
                 if(!reconnectEnabled) return@launch
                 if(connect(device).isSuccess) return@launch
+                waitMs=(waitMs*2).coerceAtMost(MAX_RECONNECT_BACKOFF_MS)
             }
-            error("RECONNECT_EXHAUSTED",false)
         }
     }
     private suspend fun rpc(message: StudyMessage,timeoutMs: Long=rpcTimeoutMs): StudyMessage {
