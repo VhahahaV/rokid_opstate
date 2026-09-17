@@ -12,6 +12,8 @@
 
 新的 Linux x86_64 工作站执行 `bash tools/setup_linux.sh`。脚本在用户目录安装环境，验证 JDK/SDK 下载校验和，通过 sdkmanager 接受 SDK 许可，创建机器本地 `.local/environment.sh` 和 `local.properties`。重复执行可复用已安装工具。依赖下载时间不属于测试时长。
 
+macOS（arm64/x86_64）执行 `bash tools/setup_macos.sh`。它先复用机器上已有的 JDK 17–23（Homebrew openjdk 或 `/usr/libexec/java_home`）与 Android SDK（Platform 35、Build Tools 34.0.0），都找不到时才下载 Temurin 21 和官方命令行工具；因此已配置的机器重复执行不产生下载。两个脚本写入相同变量名和同名机器本地文件，所以 `make quick-check`、`make apks`、`make device-apks` 等命令在两端一致，仓库内没有平台分支。
+
 5080 已完成环境安装，无须再次执行安装脚本：
 
 ```bash
@@ -20,7 +22,7 @@ make apks
 make quick-check
 ```
 
-`tools/gradle.sh` 自动读取该机器的 `.local/environment.sh`；没有此文件时按 `OPSTATE_JAVA_HOME`、`JAVA_HOME` 和常见 JDK 路径选择 Java。macOS 可保留本机 SDK 路径在 `local.properties` 中。
+`tools/gradle.sh` 自动读取该机器的 `.local/environment.sh`；没有此文件时按 `OPSTATE_JAVA_HOME`、`JAVA_HOME` 和常见 JDK 路径选择 Java。macOS 上它会优先选中 Homebrew 的 `openjdk`。Android SDK 路径由机器本地 `local.properties` 指定，两端写法相同。
 
 ## 命令与产物
 
