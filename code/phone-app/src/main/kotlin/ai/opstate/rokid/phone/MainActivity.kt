@@ -63,6 +63,14 @@ class MainActivity : ComponentActivity() {
         window.navigationBarColor=android.graphics.Color.rgb(252,253,249)
         val endpoint=graph.settings.getString("harness_url",getPreferences(MODE_PRIVATE).getString("harness_url","http://127.0.0.1:8765"))!!
         viewState.update { it.copy(endpoint=endpoint,expectedModelId=graph.settings.getString("expected_model_id","").orEmpty(),directModel=graph.modelConfig(),syncBatchSetting=graph.settings.getInt("sync_batch_size",60)) }
+        // Restore the history selection made before this process started. Only the reference and the
+        // counts are kept here; the seed itself is read from the journal when the session starts.
+        graph.settings.getString("history_source_session_id",null)?.let {sourceId->
+            viewState.update {it.copy(importedHistory=ImportedHistory(sourceSessionId=sourceId,
+                imageLimit=graph.settings.getInt("history_image_limit",0),
+                title=graph.settings.getString("history_title","").orEmpty(),
+                images=graph.settings.getInt("history_images",0),contexts=graph.settings.getInt("history_contexts",0)))}
+        }
         scope.launch { graph.link.state.collect { link -> viewState.update { it.copy(link=link,sdkIdentityCached=graph.link.hasDeviceIdentity()) } } }
         scope.launch { graph.transport.ready.collect { ready -> viewState.update { it.copy(peerReady=ready) } } }
         scope.launch {
@@ -169,7 +177,7 @@ class MainActivity : ComponentActivity() {
                 stopReplay={startService(Intent(this,DatasetReplayService::class.java).setAction(DatasetReplayService.STOP))},
                 openSessionId=::openSession,
                 openLogs=::openLogs,
-                clearHistory={viewState.update {it.copy(importedHistory=null)}},
+                clearHistory={viewState.update {it.copy(importedHistory=null)};graph.settings.edit().remove("history_source_session_id").apply()},
                 loadHistory={sessionId,index,limit,done->operate {
                     check(graph.studyRuntime.state.value.sessionId==null) {"SESSION_ALREADY_ACTIVE"}
                     val imported=withContext(Dispatchers.IO) {
@@ -186,6 +194,14 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     viewState.update {it.copy(importedHistory=imported)}
+                    // The selection has to outlive this process. It was in memory only, so any restart
+                    // silently turned a history-continuation session into a live-only one, and the model
+                    // got historical photographs with none of the notes that make a service worth showing.
+                    // Only the reference is stored; the images are loaded from the journal at session start.
+                    if(sessionId!=null) graph.settings.edit().putString("history_source_session_id",sessionId)
+                        .putInt("history_image_limit",limit).putString("history_title",imported.title)
+                        .putInt("history_images",imported.images).putInt("history_contexts",imported.contexts).apply()
+                    else graph.settings.edit().remove("history_source_session_id").apply()
                     message("历史已加载，请选择采集或在线服务")
                     done()
                 }},
