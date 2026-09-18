@@ -13,6 +13,7 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
@@ -100,6 +101,7 @@ class MainActivity : Activity() {
         content.removeAllViews(); displayed=state.card; passiveStatus=false
         val card=state.card
         if(card!=null) {
+            wakeForCard()
             text(when(card.kind) {"SERVICE"->"OPSTATE  /  主动服务";"STATUS"->"OPSTATE  /  会话状态";else->"OPSTATE  /  情境更新"},15f,Color.rgb(136,255,227),1)
             text(card.title,26f,Color.WHITE,2,bold=true)
             text(card.body,22f,Color.WHITE,9)
@@ -150,6 +152,21 @@ class MainActivity : Activity() {
         }
         // An active session with no card is intentionally a completely black, silent view.
         updateDisplayPolicy()
+    }
+    /**
+     * Wakes the panel for a card. The screen sleeps on its own while collecting, and a card drawn on a
+     * dark display is not visible to anyone — the two-frame visible ACK would never be produced and the
+     * delivery would fail for a reason the model cannot see. The wake lock carries a timeout because the
+     * window's KEEP_SCREEN_ON flag keeps the panel lit for as long as the card is up.
+     */
+    @Suppress("DEPRECATION")
+    private fun wakeForCard() {
+        val power=getSystemService(PowerManager::class.java)
+        if(power.isInteractive) return
+        runCatching {
+            power.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                PowerManager.ON_AFTER_RELEASE,"OPSTATE:card").acquire(3_000)
+        }
     }
     private fun updateDisplayPolicy() {
         val showing=content.childCount>0
