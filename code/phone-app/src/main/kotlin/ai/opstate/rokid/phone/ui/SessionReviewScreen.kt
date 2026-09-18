@@ -37,7 +37,7 @@ import java.util.Locale
 
 @Composable fun SessionReviewScreen(review: SessionReview,trial: TrialReview?,busy: Boolean,message: String?,
     back: ()->Unit,openTrial: (TrialSummary)->Unit,export: ()->Unit,delete: ()->Unit,refresh: ()->Unit,dismissMessage: ()->Unit,logs: ()->Unit,
-    addContext: (String,String,String,Long)->Unit={_,_,_,_->},importContext: ()->Unit={},replayCard: (String)->Unit={}) {
+    addContext: (String,String,String,Long)->Unit={_,_,_,_->},importContext: ()->Unit={},replayCard: (String)->Unit={},demoFrames: ()->Unit={}) {
     val overviewScroll=rememberLazyListState()
     val trialScroll=key(trial?.summary?.anchorId) { rememberLazyListState() }
     var filter by rememberSaveable(review.session.sessionId) { mutableStateOf("全部") }
@@ -140,6 +140,8 @@ import java.util.Locale
                     SettingRow("真实显示回执",(review.counts["receipts"] ?: 0).toString())
                     PrimaryButton("导出完整记录",!busy && review.verified && review.phase in setOf("STOPPED","PAUSED"),export)
                     Text("ZIP 包含请求、响应、图像、审计链和 SHA-256 清单。",style=MaterialTheme.typography.bodySmall,color=Quiet)
+                    TextButton(onClick=demoFrames,enabled=!busy,modifier=Modifier.fillMaxWidth()) {Text("生成演示帧")}
+                    Text("把每次真实显示过的主动服务渲染成「当时的画面 + 卡片」，用于挑选和展示。",style=MaterialTheme.typography.bodySmall,color=Quiet)
                     TextButton(logs,modifier=Modifier.fillMaxWidth()) {Text("查看运行日志")}
                 } }
                 item { Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {

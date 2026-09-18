@@ -119,6 +119,16 @@ class MainActivity : ComponentActivity() {
                     addContext={type,title,body,at->addRecordContext(selected!!.session.sessionId,type,title,body,at)},
                     importContext={importRecordContext(selected!!.session.sessionId)},
                     replayCard={anchor->replayServiceCard(selected!!.session.sessionId,anchor)},
+                    demoFrames={ operate {
+                        val sessionId=selected!!.session.sessionId
+                        val trials=selected!!.trials
+                        val outcome=withContext(Dispatchers.IO) {
+                            val repository=SessionReviewRepository(graph.journal)
+                            DemoFrameRenderer.write(File(getExternalFilesDir(null),"demo"),sessionId,
+                                DemoFrameRenderer.candidates(repository,sessionId,trials))
+                        }
+                        message(if(outcome.second==0) "这次会话没有真实显示过的主动服务" else "已生成 ${outcome.second} 帧：${outcome.first.absolutePath}")
+                    } },
                     refresh={openSession(selected.session.sessionId)},dismissMessage={viewState.update {it.copy(message=null)}},logs={openLogs(selected.session.sessionId)})
                 } else screenState.SaveableStateProvider("operator") { OperatorScreen(state,OperatorActions(
                 scan={ scan() },reconnect={ operate { val device=graph.link.savedDevice() ?: error("NO_SAVED_DEVICE")
