@@ -11,6 +11,7 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
@@ -18,7 +19,6 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
-import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.text.TextUtils
@@ -27,6 +27,31 @@ import ai.opstate.rokid.glasses.display.VisibleDrawAcknowledger
 import kotlinx.coroutines.*
 
 class MainActivity : Activity() {
+    companion object {
+        /**
+         * Window brightness for anything this page draws.
+         *
+         * The panel is a green micro-LED waveguide: when it is lit it glows across its whole area, so
+         * the system brightness this window used to inherit - 204/255 on the wearer's unit - reads as
+         * glare rather than as text. This sits well below it and is meant to be tuned on the glasses:
+         * lower is calmer but eventually unreadable, and much above 0.4 brings the waveguide glow back.
+         */
+        internal const val CONTENT_BRIGHTNESS=0.3f
+    }
+    /**
+     * Only the green channel reaches the eye, so every colour collapses to a level of green and
+     * hierarchy has to come from brightness rather than hue. These are a luminance ladder, kept in one
+     * place so the whole display stays consistent: the title is the brightest thing on screen and each
+     * step below it is dimmer.
+     */
+    private val Primary=Color.rgb(255,255,255)
+    private val Body=Color.rgb(216,216,216)
+    private val Meta=Color.rgb(152,152,152)
+    private val Faint=Color.rgb(104,104,104)
+    private val Line=Color.rgb(58,58,58)
+    /** The brand mint, dimmed from #88FFE3. At G=255 it is the brightest thing the panel can make,
+     *  which is a lot of light for a rule whose only job is to say "this one is a service". */
+    private val Accent=Color.rgb(120,214,178)
     private val graph get()=application as GlassesApplication
     private val scope=MainScope()
     private lateinit var content: LinearLayout
@@ -37,6 +62,12 @@ class MainActivity : Activity() {
     // Collection status is passive: it still renders, but must not hold the panel lit for a whole session.
     private var passiveStatus=false
     private var choosingPhone=false
+    /**
+     * What a tap on empty space means. Spacers and dividers are not clickable, so a touch between
+     * blocks falls through to the page itself; naming the owner per screen keeps the pairing screen
+     * from treating a stray tap as "confirm", which would start a bond with whatever row is selected.
+     */
+    private var screenTap:(()->Unit)={primaryAction()}
     private var phoneIndex=0
     private var pairingHint="在手机打开蓝牙设置，使手机可被发现"
     private val phones=linkedMapOf<String,BluetoothDevice>()
@@ -58,14 +89,16 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         content=LinearLayout(this).apply {
-            orientation=LinearLayout.VERTICAL; gravity=Gravity.CENTER_VERTICAL
-            setBackgroundColor(Color.BLACK); setPadding(28,20,28,20)
+            // Top-anchored: a card's first line lands in the same place every time, so the eye knows
+            // where to look without hunting a block whose position depends on how long it is.
+            orientation=LinearLayout.VERTICAL; gravity=Gravity.TOP or Gravity.START
+            setBackgroundColor(Color.BLACK); setPadding(dp(24f),dp(28f),dp(24f),dp(20f))
         }
         setContentView(content)
         // Reaching here from a card means the panel was asleep; these let the page turn it back on
         // rather than waiting for the wearer to touch the glasses.
         if(Build.VERSION.SDK_INT>=27) { setTurnScreenOn(true);setShowWhenLocked(true) }
-        content.setOnClickListener { primaryAction() }
+        content.setOnClickListener { screenTap() }
         scope.launch { graph.ui.collect { render(it) } }
         startStudy()
     }
@@ -101,63 +134,81 @@ class MainActivity : Activity() {
         lastState=state
         if(state.card!=null && displayed==state.card && previous?.sessionId==state.sessionId && previous?.running==true && state.running) return
         visible?.close(); visible=null
+        screenTap={primaryAction()}
         content.removeAllViews(); displayed=state.card
         // Cards are the only view that holds the panel; anything else renders and lets it sleep.
         passiveStatus=state.card==null
         val card=state.card
         if(card!=null) {
             wakeForCard()
-            // A service is the payoff of the whole system, so it is the one card worth an accent and a
-            // mode label; everything else stays quiet so a service is unmistakable at a glance.
-            if(card.kind=="SERVICE") accentBar()
-            text(when(card.kind) {"SERVICE"->"OPSTATE  /  主动服务";"STATUS"->"OPSTATE  /  会话状态";else->"OPSTATE  /  情境更新"},15f,Color.rgb(136,255,227),1)
-            text(card.title,27f,Color.WHITE,3,bold=true)
-            if(card.kind=="SERVICE") text(serviceModeLabel(card.mode),14f,Color.rgb(136,255,227),1)
-            text(card.body,22f,Color.WHITE,9)
-            text("单击收起 · 双击返回桌面",13f,Color.GRAY,2)
+            cardView(card)
             if(card.kind in setOf("SERVICE","STATUS")) visible=VisibleDrawAcknowledger(content,{ displayed?.id==card.id && graph.ui.value.card?.id==card.id }) { frames ->
                 graph.visibleEvents.trySend(VisibleEvent(card.id,card.epoch,frames,System.currentTimeMillis()))
             }
         } else if(demoCollapsed && state.running) {
             // Keep the capture service alive, but release the display and its light.
         } else if(!state.running) {
-            text("OPSTATE",26f,Color.WHITE)
-            text(state.setupError ?: "正在准备相机与连接",17f,Color.LTGRAY)
-            content.addView(Button(this).apply { text="启动眼镜"; setOnClickListener { startStudy() } })
+            eyebrow("OPSTATE")
+            gap(12f)
+            hero(state.setupError ?: "正在准备相机与连接")
+            gap(24f)
+            outlineButton("启动眼镜") { startStudy() }
         } else if(state.sessionId==null) {
-            text("OPSTATE",15f,Color.rgb(136,255,227),1)
-            text(if(state.phoneConnected) "手机已连接" else "连接你的手机",26f,Color.WHITE,2,bold=true)
-            text(state.setupError ?: when {state.phoneConnected->"在手机上选择模式并开始";!state.cameraReady->"相机准备中…";else->"轻触侧边，选择或配对手机"},18f,Color.LTGRAY,3)
-            if(state.bufferedPhotos>0) text("眼镜还有 ${state.bufferedPhotos} 张照片\n开始会话后恢复同步",15f,Color.GRAY,3)
-            else if(state.phoneConnected) text("照片先存眼镜，按手机设置分批同步",15f,Color.GRAY,2)
-            text("双击返回桌面",13f,Color.GRAY,1)
+            eyebrow("OPSTATE")
+            gap(12f)
+            hero(if(state.phoneConnected) "手机已连接" else "连接你的手机")
+            gap(12f)
+            support(state.setupError ?: when {state.phoneConnected->"在手机上选择模式并开始";!state.cameraReady->"相机准备中…";else->"轻触侧边，选择或配对手机"},3)
+            if(state.bufferedPhotos>0) { gap(18f);meta("眼镜还有 ${state.bufferedPhotos} 张照片\n开始会话后恢复同步",3) }
+            else if(state.phoneConnected) { gap(18f);meta("照片先存眼镜，按手机设置分批同步") }
+            gap(18f)
+            divider(); gap(12f)
+            footer("单击收起 · 双击返回桌面")
         } else if(!state.phoneConnected) {
-            text("OPSTATE",15f,Color.rgb(136,255,227),1)
-            text(if(state.collectingLocally) "正在本地采集" else "手机连接已中断",24f,Color.WHITE,2,bold=true)
-            text("眼镜待同步 ${state.bufferedPhotos} 张\n轻触侧边查找手机",18f,Color.LTGRAY,3)
+            eyebrow("OPSTATE")
+            gap(12f)
+            hero(if(state.collectingLocally) "正在本地采集" else "手机连接已中断")
+            gap(12f)
+            support("眼镜待同步 ${state.bufferedPhotos} 张",2)
+            gap(18f)
+            divider(); gap(12f)
+            footer("轻触侧边查找手机")
         } else if(state.demoStatus!=null) {
             val demo=state.demoStatus
             if(demo.collection) {
                 passiveStatus=true
                 if(!demoCollapsed) {
-                    text("OPSTATE · 采集",14f,Color.rgb(136,255,227),1)
-                    text(demo.phase,24f,Color.WHITE,2,bold=true)
-                    text("手机 ${demo.captures} 张 · 待同步 ${state.bufferedPhotos} 张",20f,Color.WHITE,2)
-                    text("每 ${demo.intervalSeconds} 秒拍摄",16f,Color.LTGRAY,1)
-                    text("单击收起 · 双击返回桌面\n采集继续，停止请在手机结束",14f,Color.GRAY,3)
+                    eyebrow("OPSTATE · 采集")
+                    gap(12f)
+                    hero(demo.phase,2)
+                    gap(12f)
+                    support("手机 ${demo.captures} 张 · 待同步 ${state.bufferedPhotos} 张",2)
+                    gap(8f)
+                    meta("每 ${demo.intervalSeconds} 秒拍摄")
+                    gap(18f)
+                    divider(); gap(12f)
+                    footer("单击收起 · 双击返回桌面\n采集继续，停止请在手机结束")
                 }
                 updateDisplayPolicy()
                 return
             }
-            text("OPSTATE",14f,Color.rgb(136,255,227),1)
-            text(demo.phase,22f,Color.WHITE,2,bold=true)
+            eyebrow("OPSTATE")
+            gap(12f)
+            hero(demo.phase,2)
             if(!demoCollapsed) {
-                text("当前情境",14f,Color.LTGRAY,1)
-                text(demo.context,20f,Color.WHITE,7)
-                text("${demo.captures} 次观察    ${demo.receipts} 条服务回执",15f,Color.LTGRAY,1)
-                text(if(demo.automaticCapture) "每 60 秒自动观察 · 手机可手动拍照" else "自动观察已关闭 · 手机可手动拍照",13f,Color.GRAY,2)
+                gap(14f)
+                meta("当前情境")
+                gap(6f)
+                // The status view carries two footers, so its body gets fewer lines than a card's.
+                support(demo.context,5)
+                gap(14f)
+                meta("${demo.captures} 次观察    ${demo.receipts} 条服务回执")
+                gap(8f)
+                footer(if(demo.automaticCapture) "每 60 秒自动观察 · 手机可手动拍照" else "自动观察已关闭 · 手机可手动拍照")
             }
-            text("单击收起 · 双击返回桌面",13f,Color.GRAY,2)
+            gap(18f)
+            divider(); gap(12f)
+            footer("单击收起 · 双击返回桌面")
         }
         // An active session with no card is intentionally a completely black, silent view.
         updateDisplayPolicy()
@@ -184,8 +235,14 @@ class MainActivity : Activity() {
         // whole panel, which on these glasses lights every pixel whether or not anything is drawn on it.
         if(showing && !passiveStatus && displayed!=null) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        window.attributes=window.attributes.apply {
-            screenBrightness=if(showing) WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE else 0f
+        // Deliberately not the system brightness: a waveguide that glows across its whole area whenever
+        // it is lit turns the wearer's 80% setting into glare rather than legibility. Writing the
+        // attributes re-lays-out the window and this runs on every render and every DPAD step, so only
+        // write when the value changed - and never while the window is on its way out, where the write
+        // would land on a decor view the window manager has already detached.
+        val brightness=if(showing) CONTENT_BRIGHTNESS else 0f
+        if(!isFinishing && !isDestroyed && window.attributes.screenBrightness!=brightness) {
+            window.attributes=window.attributes.apply { screenBrightness=brightness }
         }
         graph.displayVisible.value=showing && content.hasWindowFocus() && !isFinishing
     }
@@ -199,22 +256,91 @@ class MainActivity : Activity() {
             finishAndRemoveTask()
         }
     }
-    /** The one piece of colour meant to catch the eye: a service is not a status line. */
-    private fun accentBar() {
-        content.addView(View(this).apply {
-            setBackgroundColor(Color.rgb(136,255,227))
-            layoutParams=LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,(2.5f*density).toInt())
-        })
+    /**
+     * The card. A service is the payoff of the whole system, so it is the one card with an accent and a
+     * mode label; everything else stays quiet so a service is unmistakable at a glance. A replay draws
+     * itself exactly like a live service, because a demonstration is meant to read the same.
+     */
+    private fun cardView(card: GlassesCard) {
+        val service=card.kind in setOf("SERVICE","REPLAY")
+        eyebrow(when(card.kind) {
+            "SERVICE","REPLAY"->"OPSTATE · 主动服务"
+            "STATUS"->"OPSTATE · 会话状态"
+            else->"OPSTATE · 情境更新"
+        },accented=service)
+        gap(12f)
+        hero(card.title)
+        if(service) { gap(14f);chip(serviceModeLabel(card.mode)) }
+        gap(14f)
+        support(card.body)
+        gap(18f)
+        divider()
+        gap(12f)
+        footer("单击收起 · 双击返回桌面")
     }
     private fun serviceModeLabel(mode: String)=when(mode) {
         "AWARENESS"->"提醒";"DECISION"->"建议";"PREPARATION"->"准备";"EXECUTION"->"执行";else->"服务"
     }
     private val density get()=resources.displayMetrics.density
-    private fun text(value: String,size: Float,color: Int,lines: Int=10,bold: Boolean=false) { content.addView(TextView(this).apply {
-        text=value; textSize=size; setTextColor(color); setPadding(0,8,0,10);maxLines=lines;ellipsize=TextUtils.TruncateAt.END
-        // Wearing distance: a little extra leading keeps a wrapped service body readable.
-        setLineSpacing(0f,1.18f)
-        if(bold) typeface=Typeface.DEFAULT_BOLD
+    private fun dp(value: Float)=(value*density).toInt()
+    /** The rhythm between blocks lives here rather than in padding on every line. */
+    private fun gap(value: Float) { content.addView(View(this).apply { layoutParams=LinearLayout.LayoutParams(1,dp(value)) }) }
+    private fun divider() { content.addView(View(this).apply {
+        setBackgroundColor(Line); layoutParams=LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,dp(1f).coerceAtLeast(1))
+    }) }
+    private fun line(value: String,size: Float,color: Int,lines: Int,leading: Float,bold: Boolean=false,spacing: Float=0f) {
+        content.addView(TextView(this).apply {
+            text=value; textSize=size; setTextColor(color); maxLines=lines; ellipsize=TextUtils.TruncateAt.END
+            // Wearing distance: a little extra leading keeps a wrapped service body readable.
+            setLineSpacing(0f,leading)
+            if(spacing!=0f) letterSpacing=spacing
+            if(bold) typeface=Typeface.DEFAULT_BOLD
+        })
+    }
+    /** What kind of thing this is: the quietest, smallest line on screen. */
+    private fun eyebrow(value: String,accented: Boolean=false) {
+        val row=LinearLayout(this).apply { orientation=LinearLayout.HORIZONTAL; gravity=Gravity.CENTER_VERTICAL }
+        // The one piece of colour meant to catch the eye, kept deliberately small: on this panel a filled
+        // block of full-strength green is the brightest thing it can draw, which a decoration has not
+        // earned. A slim rule says "service" without lighting up a bar across the screen.
+        if(accented) row.addView(View(this).apply {
+            setBackgroundColor(Accent)
+            layoutParams=LinearLayout.LayoutParams(dp(2f).coerceAtLeast(2),dp(14f)).apply { rightMargin=dp(10f) }
+        })
+        row.addView(TextView(this).apply { text=value; textSize=12f; setTextColor(Meta); letterSpacing=0.08f })
+        content.addView(row)
+    }
+    /** The one line the wearer has to read first, and the brightest thing on screen. */
+    private fun hero(value: String,lines: Int=2)=line(value,24f,Primary,lines,1.25f,bold=true)
+    /**
+     * The card's substance, capped at seven lines. That is what fits under a two-line title once the
+     * header and footer are paid for, and the footer has to stay: it is the only thing that teaches
+     * the wearer how to dismiss a card, and a card nobody dismisses sits out its whole time-to-live.
+     */
+    private fun support(value: String,lines: Int=7)=line(value,17f,Body,lines,1.4f)
+    private fun meta(value: String,lines: Int=3)=line(value,14f,Meta,lines,1.35f)
+    private fun footer(value: String)=line(value,12f,Faint,2,1.3f)
+    /**
+     * An outlined mode chip: a thin rule of light rather than a filled block of it.
+     *
+     * A vertical LinearLayout hands its children MATCH_PARENT width, so the outline has to be told to
+     * hug its label - otherwise this "small" chip draws a box the full width of the screen, which is
+     * most of the light the accent bar it replaced used to spend.
+     */
+    private fun chip(value: String) { content.addView(TextView(this).apply {
+        text=value; textSize=12f; setTextColor(Accent); letterSpacing=0.06f
+        setPadding(dp(9f),dp(4f),dp(9f),dp(4f))
+        layoutParams=LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,LinearLayout.LayoutParams.WRAP_CONTENT)
+        background=GradientDrawable().apply { setColor(Color.TRANSPARENT); setStroke(dp(1f).coerceAtLeast(1),Accent); cornerRadius=dp(4f).toFloat() }
+    }) }
+    /** The only control on the glasses, kept to an outline so it does not light a filled block. */
+    private fun outlineButton(label: String,onClick: ()->Unit) { content.addView(TextView(this).apply {
+        text=label; textSize=17f; setTextColor(Body); gravity=Gravity.CENTER
+        setPadding(dp(22f),dp(13f),dp(22f),dp(13f))
+        // Same reason as the chip: an outline that spans the screen is a lit rectangle with a hole.
+        layoutParams=LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,LinearLayout.LayoutParams.WRAP_CONTENT)
+        background=GradientDrawable().apply { setColor(Color.TRANSPARENT); setStroke(dp(1f).coerceAtLeast(1),Meta); cornerRadius=dp(10f).toFloat() }
+        isClickable=true; setOnClickListener { onClick() }
     }) }
     override fun onKeyUp(keyCode: Int,event: KeyEvent): Boolean {
         if(keyCode==KeyEvent.KEYCODE_BACK) {if(!event.isCanceled) backAction();return true}
@@ -263,19 +389,49 @@ class MainActivity : Activity() {
     }
     private fun renderPhones() {
         visible?.close();visible=null;displayed=null;content.removeAllViews()
-        text("连接手机",24f,Color.WHITE,1,bold=true)
-        text(pairingHint,15f,Color.LTGRAY,3)
+        // Only the rows themselves act here, so a tap that misses them cannot start a pairing.
+        screenTap={}
+        eyebrow("OPSTATE")
+        gap(12f)
+        hero("连接手机")
+        gap(12f)
+        support(pairingHint,3)
+        gap(18f)
+        divider()
+        gap(12f)
         val labels=phones.values.map {"${it.name ?: "未命名设备"} · ${if(it.bondState==BluetoothDevice.BOND_BONDED) "已配对" else "可配对"}"}+
             listOf("重新搜索附近手机","系统蓝牙与配对")
         phoneIndex=phoneIndex.coerceIn(0,labels.lastIndex)
         val first=(phoneIndex-1).coerceAtLeast(0).coerceAtMost((labels.size-3).coerceAtLeast(0))
         labels.drop(first).take(3).forEachIndexed {offset,label->
             val index=first+offset
-            text((if(index==phoneIndex) "›  " else "   ")+label,19f,if(index==phoneIndex) Color.rgb(136,255,227) else Color.WHITE,2)
-            content.getChildAt(content.childCount-1).setOnClickListener {phoneIndex=index;selectPhone()}
+            phoneRow(label,index==phoneIndex) {phoneIndex=index;selectPhone()}
         }
-        text("前后滑动选择 · 单击确认 · 双击返回",13f,Color.GRAY,2)
+        gap(18f)
+        divider()
+        gap(12f)
+        footer("前后滑动选择 · 单击确认 · 双击返回")
         updateDisplayPolicy()
+    }
+    /**
+     * A selectable row. Selection is carried by both the marker and the label's brightness. The row
+     * owns its own vertical space rather than sitting behind a spacer, so a tap that lands between
+     * two rows belongs to nobody.
+     */
+    private fun phoneRow(label: String,selected: Boolean,onClick: ()->Unit) {
+        val row=LinearLayout(this).apply {
+            orientation=LinearLayout.HORIZONTAL; gravity=Gravity.CENTER_VERTICAL
+            setPadding(0,dp(16f),0,dp(16f)); isClickable=true; setOnClickListener { onClick() }
+        }
+        row.addView(View(this).apply {
+            setBackgroundColor(if(selected) Accent else Color.TRANSPARENT)
+            layoutParams=LinearLayout.LayoutParams(dp(2f).coerceAtLeast(2),dp(16f)).apply { rightMargin=dp(12f) }
+        })
+        row.addView(TextView(this).apply {
+            text=label; textSize=17f; maxLines=2; ellipsize=TextUtils.TruncateAt.END
+            setTextColor(if(selected) Primary else Meta)
+        })
+        content.addView(row)
     }
     private fun selectPhone() {
         val device=phones.values.elementAtOrNull(phoneIndex)

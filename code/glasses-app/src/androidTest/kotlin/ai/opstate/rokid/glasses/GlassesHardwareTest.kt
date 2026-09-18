@@ -68,8 +68,20 @@ class GlassesHardwareTest {
                 assertEquals(0,activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 assertFalse(app.displayVisible.value)
                 activity.onKeyUp(KeyEvent.KEYCODE_ENTER,KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ENTER))
+                // Re-expanding shows the collection status again, and that view stays passive: only a
+                // card holds the panel lit, because only a card needs an interactive screen for the
+                // two-frame visible ACK. It still renders, at the dimmed content brightness.
+                assertEquals(0,activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                assertEquals(MainActivity.CONTENT_BRIGHTNESS,activity.window.attributes.screenBrightness,0f)
+            }
+            // A card is the exception to that passivity, and the reason is the ACK: the two-frame
+            // visible acknowledgement cannot be produced on a panel that has already gone dark.
+            app.mutableUi.value=app.ui.value.copy(card=GlassesCard("display-fixture-card",1,"SERVICE","PREPARATION",
+                "现在可以出发","组会地点已改到 B302。",SystemClock.elapsedRealtime()+10000))
+            delay(100)
+            instrumentation.runOnMainSync {
                 assertTrue(activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON != 0)
-                assertEquals(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE,activity.window.attributes.screenBrightness,0f)
+                assertEquals(MainActivity.CONTENT_BRIGHTNESS,activity.window.attributes.screenBrightness,0f)
                 activity.onKeyUp(KeyEvent.KEYCODE_BACK,KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_BACK))
                 assertTrue(activity.isFinishing)
                 assertFalse(app.displayVisible.value)
