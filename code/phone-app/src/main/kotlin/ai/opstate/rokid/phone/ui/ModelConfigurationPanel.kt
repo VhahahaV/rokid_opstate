@@ -39,11 +39,14 @@ import kotlinx.serialization.json.*
         Panel {
             SectionTitle("模型配置","DIRECT MODEL API")
             Text("手机通过 API Key 直接调用模型。",style=MaterialTheme.typography.bodyMedium,color=Quiet)
+            // A choice, not a text field: the model has to match a prompt and a parser that were frozen
+            // for it, so a hand-typed id could only ever fail at request time.
             Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected=model==DirectModelConfig.qwen().modelId,onClick={preset(DirectModelConfig.qwen())},enabled=editable,label={Text("Qwen Max")})
-                FilterChip(selected=model==DirectModelConfig.gpt().modelId,onClick={preset(DirectModelConfig.gpt())},enabled=editable,label={Text("GPT Sol")})
+                DirectModelConfig.choices().forEach {(label,value)->
+                    FilterChip(selected=model==value.modelId,onClick={preset(value)},enabled=editable,label={Text(label)})
+                }
             }
-            OutlinedTextField(model,{model=it},label={Text("模型 ID")},enabled=editable,singleLine=true,modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(12.dp))
+            Text(model,style=MaterialTheme.typography.bodySmall,color=Quiet)
             OutlinedTextField(endpoint,{endpoint=it},label={Text("API 地址")},supportingText={Text("可填写 Base URL 或完整接口地址")},enabled=editable,singleLine=true,modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(12.dp))
             Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                 FilterChip(selected=api=="chat_completions",onClick={api="chat_completions"},enabled=editable,label={Text("Chat Completions")})

@@ -183,7 +183,7 @@ import java.util.Locale
     }
     if(confirmDelete) AlertDialog(onDismissRequest={confirmDelete=false},title={Text("删除本地会话？")},text={Text("将删除这次会话的观察、图像、请求、响应及本地导出缓存。已另存的 ZIP 不受影响。")},
         confirmButton={TextButton(onClick={confirmDelete=false;delete()}) {Text("删除",color=MaterialTheme.colorScheme.error)}},dismissButton={TextButton(onClick={confirmDelete=false}) {Text("保留")}})
-    selectedPhoto?.let {PhotoViewer(review.photos,it,{selectedPhoto=it},{selectedPhoto=null})}
+    selectedPhoto?.let {PhotoViewer(review.photos,it,{selectedPhoto=it},{selectedPhoto=null},{anchor->replayCard(anchor)})}
     if(insertOpen) SyntheticContextDialog(startedAt=review.session.startedAtEpochMs,endedAt=review.session.endedAtEpochMs,
         onConfirm={ type,title,body,at -> addContext(type,title,body,at);insertOpen=false },
         onDismiss={insertOpen=false})

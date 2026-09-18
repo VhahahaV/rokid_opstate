@@ -37,7 +37,6 @@ data class ImportedHistory(val sourceSessionId: String?=null,val publicIndex: In
 @OptIn(ExperimentalLayoutApi::class)
 @Composable internal fun SessionSetupPanel(state: OperatorViewState,actions: OperatorActions,connect: ()->Unit,importHistory: ()->Unit) {
     var mode by rememberSaveable {mutableStateOf(SessionMode.COLLECTION)}
-    var forceService by rememberSaveable {mutableStateOf(false)}
     var interval by rememberSaveable {mutableLongStateOf(60_000)}
     var alias by rememberSaveable {mutableStateOf("")}
     var naming by rememberSaveable {mutableStateOf(false)}
@@ -61,14 +60,8 @@ data class ImportedHistory(val sourceSessionId: String?=null,val publicIndex: In
             FilterChip(selected=mode==SessionMode.SERVICE,onClick={mode=SessionMode.SERVICE},label={Text("在线服务")},modifier=Modifier.weight(1f))
         }
         Text(if(mode==SessionMode.COLLECTION) "眼镜定时拍照并保存，分批同步到手机。" else "眼镜本地判断变化，触发后传图并结合历史提供服务。",color=Quiet,style=MaterialTheme.typography.bodyMedium)
-        if(mode==SessionMode.SERVICE) {
-            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) {
-                Text("强制服务",style=MaterialTheme.typography.titleSmall)
-                Switch(checked=forceService,onCheckedChange={forceService=it})
-            }
-            Text("每次调用都要求模型给出服务，用来批量产出演示素材。这一条走的是另一份提示词，冻结契约里的提示词哈希不同，导出里能一眼分清。",
-                style=MaterialTheme.typography.bodySmall,color=Quiet)
-        }
+        // 强制服务 is not offered here: it belongs to a running service, next to the sources it applies
+        // to, rather than to the act of starting one.
         if(mode==SessionMode.COLLECTION) {
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)) {
                 listOf(5_000L to "5秒",30_000L to "30秒",60_000L to "1分钟",120_000L to "2分钟").forEach {(value,label)->
@@ -88,7 +81,7 @@ data class ImportedHistory(val sourceSessionId: String?=null,val publicIndex: In
             if(!state.peerReady) connect() else actions.start(SessionLaunchOptions(
                 alias=alias.ifBlank {SimpleDateFormat("MM-dd HH:mm",Locale.CHINA).format(Date())},mode=mode,captureIntervalMs=interval,syncBatchSize=batch.toInt(),
                 demoMode=false,historyIndex=history?.publicIndex,collectionHistorySessionId=history?.sourceSessionId,
-                collectionHistoryImageLimit=history?.imageLimit ?: 0,forceService=mode==SessionMode.SERVICE && forceService))
+                collectionHistoryImageLimit=history?.imageLimit ?: 0))
         }
         state.runtime.error?.let {Text(sessionError(it),color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)}
     }

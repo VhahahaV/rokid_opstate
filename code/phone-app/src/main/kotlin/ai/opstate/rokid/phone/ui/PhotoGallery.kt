@@ -146,7 +146,7 @@ internal fun LazyListScope.timeline(items: List<TimelineItem>,open: (String)->Un
     }
 }
 
-@Composable internal fun PhotoViewer(photos: List<CapturedPhoto>,selectedId: String,select: (String)->Unit,close: ()->Unit) {
+@Composable internal fun PhotoViewer(photos: List<CapturedPhoto>,selectedId: String,select: (String)->Unit,close: ()->Unit,replay: (String)->Unit={}) {
     val index=photos.indexOfFirst {it.id==selectedId}
     val photo=photos.getOrNull(index) ?: return
     val metadata=photo.metadata
@@ -169,6 +169,21 @@ internal fun LazyListScope.timeline(items: List<TimelineItem>,open: (String)->Un
                 }
                 Text("向左拖动看更早的照片",style=MaterialTheme.typography.bodySmall,color=Quiet,
                     modifier=Modifier.padding(horizontal=20.dp,vertical=6.dp))
+                // A marked photograph is only useful if opening it says what the service was. The card
+                // that was on the glasses is shown here, with the replay that puts it back there.
+                if(photo.served) Surface(Modifier.fillMaxWidth().padding(horizontal=16.dp),shape=RoundedCornerShape(14.dp),color=MaterialTheme.colorScheme.surface) {
+                    Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                        Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                            Tag("主动服务",Success)
+                            Tag(when(photo.servedMode) {"AWARENESS"->"提醒";"DECISION"->"建议";"PREPARATION"->"准备";"EXECUTION"->"执行";else->"服务"},Quiet)
+                            Spacer(Modifier.weight(1f))
+                            TextButton({photo.servedAnchor?.let {replay(it)}},enabled=photo.servedAnchor!=null,
+                                contentPadding=PaddingValues(0.dp)) {Text("回放到眼镜")}
+                        }
+                        Text(photo.servedTitle.orEmpty(),style=MaterialTheme.typography.titleMedium)
+                        Text(photo.servedBody.orEmpty(),style=MaterialTheme.typography.bodyMedium,color=Quiet)
+                    }
+                }
                 LazyColumn(Modifier.weight(1f).testTag("photo-details"),verticalArrangement=Arrangement.spacedBy(16.dp),contentPadding=PaddingValues(bottom=24.dp)) {
                     item {Column(Modifier.padding(horizontal=20.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
                         Text(photoTime(photo.capturedAt),style=MaterialTheme.typography.titleLarge)

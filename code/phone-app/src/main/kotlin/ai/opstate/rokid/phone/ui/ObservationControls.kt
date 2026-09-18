@@ -33,21 +33,44 @@ import ai.opstate.rokid.phone.runtime.SessionMode
         Text("有效 ${runtime.validCaptures} · 需重拍 ${runtime.rejectedCaptures}",style=MaterialTheme.typography.bodySmall,color=Quiet)
         runtime.storageFreeBytes?.let {Text("手机剩余 ${storageSize(it)}",style=MaterialTheme.typography.bodySmall,color=Quiet)}
     }
-    Row(horizontalArrangement=Arrangement.spacedBy(10.dp)) {
-        OutlinedButton(actions.capture,enabled=runtime.phase=="RUNNING" && state.peerReady && !state.busy,modifier=Modifier.weight(1f).heightIn(min=48.dp),shape=RoundedCornerShape(12.dp)) {Text(if(runtime.mode==SessionMode.COLLECTION) "立即拍一张" else "拍照观察一次")}
-        if(runtime.mode==SessionMode.SERVICE) Button(addContext,enabled=!state.busy,modifier=Modifier.weight(1f).heightIn(min=48.dp),shape=RoundedCornerShape(12.dp)) {Text("添加合成情境")}
-    }
-    // The same chain, on material that is already on the phone: pick a stored frame or a note and it
-    // runs from there to the card exactly as a live capture would. For staging a demonstration without
-    // having to point the glasses at anything.
-    if(runtime.mode==SessionMode.SERVICE) {
-        val ready=runtime.phase=="RUNNING" && !state.busy
-        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(actions.pickPhoto,enabled=ready,modifier=Modifier.weight(1f).heightIn(min=44.dp),shape=RoundedCornerShape(12.dp)) {Text("选图跑一次")}
-            OutlinedButton(actions.pickContext,enabled=ready,modifier=Modifier.weight(1f).heightIn(min=44.dp),shape=RoundedCornerShape(12.dp)) {Text("选情境跑一次")}
+    // One entry point for everything a service can be started by hand. Four controls used to sit here
+    // at once and none of them said how they related; now the sources and the mode live together behind
+    // one button, and the only thing kept apart is adding a note, which is a different act - it feeds
+    // memory rather than triggering an evaluation.
+    if(runtime.mode==SessionMode.COLLECTION) {
+        Row(horizontalArrangement=Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(actions.capture,enabled=runtime.phase=="RUNNING" && state.peerReady && !state.busy,
+                modifier=Modifier.weight(1f).heightIn(min=48.dp),shape=RoundedCornerShape(12.dp)) {Text("立即拍一张")}
         }
-        Text("用已有的照片或合成情境走一遍完整链路，不用现场拍摄。",
-            style=MaterialTheme.typography.bodySmall,color=Quiet)
+    } else {
+        var manual by remember { mutableStateOf(false) }
+        val ready=runtime.phase=="RUNNING" && !state.busy
+        Row(horizontalArrangement=Arrangement.spacedBy(10.dp)) {
+            Button({manual=!manual},enabled=!state.busy,modifier=Modifier.weight(1f).heightIn(min=48.dp),
+                shape=RoundedCornerShape(12.dp)) {Text(if(manual) "收起源选择" else "手动服务")}
+            OutlinedButton(addContext,enabled=!state.busy,modifier=Modifier.weight(1f).heightIn(min=48.dp),
+                shape=RoundedCornerShape(12.dp)) {Text("添加合成情境")}
+        }
+        if(manual) Surface(shape=RoundedCornerShape(14.dp),color=MaterialTheme.colorScheme.surface) {
+            Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
+                Row(verticalAlignment=Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("强制服务",style=MaterialTheme.typography.titleMedium)
+                        Text("每次调用都要求模型给出服务，走另一份提示词。",style=MaterialTheme.typography.bodySmall,color=Quiet)
+                    }
+                    Switch(runtime.forceService,actions.forceService,enabled=!state.busy)
+                }
+                HorizontalDivider(color=Line)
+                Text("用哪种来源走一遍完整链路",style=MaterialTheme.typography.bodySmall,color=Quiet)
+                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(actions.capture,enabled=ready,modifier=Modifier.weight(1f).heightIn(min=44.dp),shape=RoundedCornerShape(12.dp)) {Text("拍照")}
+                    OutlinedButton(actions.pickPhoto,enabled=ready,modifier=Modifier.weight(1f).heightIn(min=44.dp),shape=RoundedCornerShape(12.dp)) {Text("选择照片")}
+                    OutlinedButton(actions.pickContext,enabled=ready,modifier=Modifier.weight(1f).heightIn(min=44.dp),shape=RoundedCornerShape(12.dp)) {Text("合成数据")}
+                }
+                Text("拍照要现场拍；选择照片和合成数据用手机上已有的内容，不用拍摄。",
+                    style=MaterialTheme.typography.bodySmall,color=Quiet)
+            }
+        }
     }
     if(runtime.latestImagePath!=null) {
         runtime.observationStatus?.let {status->Text(when(status) {

@@ -71,7 +71,9 @@ data class RuntimeViewState(val phase: String="IDLE",val sessionId: String?=null
     val shadowInference: Boolean=false,val mode: SessionMode=SessionMode.SERVICE,
     val captureIntervalMs: Long=60_000,val validCaptures: Int=0,val rejectedCaptures: Int=0,
     val savedImageBytes: Long=0,val latestImageBytes: Int?=null,val storageFreeBytes: Long?=null,
-    val glassesCapture: Boolean=false,val bufferedPhotos: Int=0,val glassesCaptures: Int=0,val glassesFreeBytes: Long?=null,val syncBatchSize: Int=60,val syncing: Boolean=false)
+    val glassesCapture: Boolean=false,val bufferedPhotos: Int=0,val glassesCaptures: Int=0,val glassesFreeBytes: Long?=null,val syncBatchSize: Int=60,val syncing: Boolean=false,
+    /** Whether the running session asks the model for a service on every call. */
+    val forceService: Boolean=false)
 
 /** Actor-owned session state; asynchronous work returns with an epoch/generation and immutable inputs. */
 class StudyRuntimeEngine(
@@ -93,7 +95,9 @@ class StudyRuntimeEngine(
         val historicalJpegs: Map<String,ByteArray> = emptyMap())
     private data class PendingDelivery(val model: PendingModel,val decision: ServiceDecision)
     private class Session(val id: String,var epoch: Long,val setup: SessionSetup,val scenario: StudyScenarioDto,
-        val client: InferenceClient?,val contract: FrozenHarnessContract?,val zeroEpoch: Long,val zeroElapsed: Long,val seed: HistorySeed?=null,
+        // Rebuildable, because the forced-service switch swaps the prompt mid-session and every request
+        // carries the prompt hash it was actually made under.
+        var client: InferenceClient?,var contract: FrozenHarnessContract?,val zeroEpoch: Long,val zeroElapsed: Long,val seed: HistorySeed?=null,
         val collectionSeed: LocalCollectionSeed?=null,val peerBuild: PeerBuildInfo?=null) {
         val timeline=scenario.timeline()
         val playback=ScenarioPlayback(setup.initialPositionMs,zeroElapsed,timeline.durationMs)
@@ -115,6 +119,8 @@ class StudyRuntimeEngine(
         var captureAckReceived=false
         var model: PendingModel?=null;var modelJob: Job?=null;var delivery: PendingDelivery?=null
         var serviceVisible=false;var visibleDecisionId: String?=null;var paused=false;var resumeOnReconnect=false;var phoneInteractionAt=0L
+        /** Whether this session currently asks the model for a service on every call. */
+        var forceService=setup.forceService
         var observationCount=0;var packetCount=0
         val historicalImages=linkedMapOf<String,ByteArray>()
         /** Notes imported as this session's history; every request carries them see the store's pinnedIds. */
@@ -138,6 +144,7 @@ class StudyRuntimeEngine(
         /** Run the chain on evidence the operator picked, instead of on a fresh capture. */
         data class EvaluatePhoto(val photo: ChosenPhoto,val reply: CompletableDeferred<Result<Unit>>): Event()
         data class EvaluateContext(val input: SyntheticContextInput,val reply: CompletableDeferred<Result<Unit>>): Event()
+        data class SetForceService(val enabled: Boolean,val reply: CompletableDeferred<Result<Unit>>): Event()
         data class AutoCapture(val enabled: Boolean): Event()
         data class DemoMode(val enabled: Boolean): Event()
         data object Tick: Event()
@@ -162,6 +169,7 @@ class StudyRuntimeEngine(
                     is Event.ContextInput -> {addContext(event.input);event.reply.complete(Result.success(Unit))}
                     is Event.EvaluatePhoto -> {chosenPhoto(chosenSession(),event.photo);event.reply.complete(Result.success(Unit))}
                     is Event.EvaluateContext -> {evaluateNow(chosenSession(),addContext(event.input));event.reply.complete(Result.success(Unit))}
+                    is Event.SetForceService -> {applyForceService(event.enabled);event.reply.complete(Result.success(Unit))}
                     is Event.AutoCapture -> active?.let {session->session.automaticCapture=event.enabled
                         journal.append(session.id,"runtime_events","AUTOMATIC_CAPTURE_CHANGED",StudyWire.payload("enabled" to event.enabled),System.currentTimeMillis())
                         _state.update {it.copy(automaticCapture=event.enabled)};configureGlasses(session)}
@@ -220,6 +228,10 @@ class StudyRuntimeEngine(
     /** Appends the chosen note and evaluates immediately, rather than waiting for the glasses to capture. */
     suspend fun evaluateChosenContext(input: SyntheticContextInput): Result<Unit> {
         val reply=CompletableDeferred<Result<Unit>>();inbox.send(Event.EvaluateContext(input,reply));return reply.await()
+    }
+    /** Turns the forced-service prompt on or off for the running session. */
+    suspend fun setForceService(enabled: Boolean): Result<Unit> {
+        val reply=CompletableDeferred<Result<Unit>>();inbox.send(Event.SetForceService(enabled,reply));return reply.await()
     }
     fun stopSoon() {scope.launch {runCatching {stopSession()}}}
     private fun nextEpoch(): Long {
@@ -302,6 +314,7 @@ class StudyRuntimeEngine(
             startingReply?.complete(Result.failure(it));startingReply=null;return
         }
         active=session
+        _state.update {it.copy(forceService=session.forceService)}
         val config=StudyWire.payload("profile" to session.setup.profile,"session_mode" to session.setup.mode.name,
             "capture_interval_ms" to session.setup.captureIntervalMs,
             "glasses_capture" to session.setup.glassesCapture,"sync_batch_size" to session.setup.syncBatchSize,
@@ -832,6 +845,23 @@ class StudyRuntimeEngine(
             "policy" to "NEW_SESSION_SEGMENT"),System.currentTimeMillis())
         stop()
         begin(Event.Start(setup,event.reply))
+    }
+    /**
+     * Swaps the prompt the session runs under. Rebuilds the client so the next request goes out with the
+     * prompt hash it was actually made under; the change is journalled, so an export can tell which calls
+     * were asked to always serve without inferring it from the wording.
+     */
+    private suspend fun applyForceService(enabled: Boolean) {
+        val session=chosenSession()
+        if(session.forceService==enabled) return
+        val setup=session.setup.copy(forceService=enabled)
+        val rebuilt=client(setup).also {session.client=it}
+        session.contract=rebuilt.contract(setup.expectedModelId)
+        session.forceService=enabled
+        val now=System.currentTimeMillis()
+        journal.append(session.id,"runtime_events","FORCE_SERVICE_CHANGED",StudyWire.payload(
+            "enabled" to enabled,"prompt_hash" to session.contract?.promptHash),now)
+        _state.update {it.copy(forceService=enabled)}
     }
     private fun chosenSession(): Session {
         val session=active ?: error("NO_ACTIVE_SESSION")

@@ -179,6 +179,8 @@ class MainActivity : ComponentActivity() {
                 seekHistory={index->operate {graph.studyRuntime.seekHistoryTo(index).getOrThrow()}},
                 automaticCapture=graph.studyRuntime::setAutomaticCapture,demoMode=graph.studyRuntime::setGlassesDemoMode,
                 addContext={input,done->operate {graph.studyRuntime.addSyntheticContext(input).getOrThrow();message("合成情境已加入，后续评估将使用这条信息");done()}},
+                forceService={enabled->operate {graph.studyRuntime.setForceService(enabled).getOrThrow();
+                    message(if(enabled) "已开启强制服务：每次调用都会给出服务" else "已关闭强制服务")}},
                 pickPhoto={ operate {
                     val sessionId=state.runtime.sessionId ?: return@operate
                     photoChoices=withContext(Dispatchers.IO) {SessionReviewRepository(graph.journal).photos(sessionId)}

@@ -47,8 +47,9 @@ data class DirectModelConfig(
         "endpoint" to resolvedEndpoint(),"wire_api" to wireApi,"parameters" to parameters(),"response_language" to responseLanguage,
         "timeout_ms" to timeoutMs,"decision_ttl_ms" to decisionTtlMs)
     companion object {
+        /** The two models this build offers, both on the same endpoint and parameters. */
         fun qwen()=DirectModelConfig()
-        fun gpt()=DirectModelConfig("gpt-5.6-sol","https://api.shuaiapi.com/v1/responses","responses",4096,
-            seed=null,enableThinking=null,reasoningEffort="high")
+        fun qwenFlash()=DirectModelConfig(modelId="qwen-3.8-flash")
+        fun choices()=listOf("Qwen 3.8 Max" to qwen(),"Qwen 3.8 Flash" to qwenFlash())
     }
 }
