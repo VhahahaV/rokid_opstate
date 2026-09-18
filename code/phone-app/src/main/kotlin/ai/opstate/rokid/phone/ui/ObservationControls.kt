@@ -1,6 +1,9 @@
 package ai.opstate.rokid.phone.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -9,6 +12,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import ai.opstate.rokid.phone.runtime.SessionMode
+
+/** One way to start a service by hand, as a row that can say what it does. */
+@Composable private fun SourceRow(title: String,hint: String,enabled: Boolean,action: ()->Unit) {
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(enabled=enabled,onClick=action)
+        .padding(horizontal=12.dp,vertical=13.dp),verticalAlignment=Alignment.CenterVertically,
+        horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+        Box(Modifier.size(7.dp).clip(CircleShape).background(if(enabled) Success else Line))
+        Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(2.dp)) {
+            Text(title,style=MaterialTheme.typography.titleMedium,color=if(enabled) Ink else Quiet)
+            Text(hint,style=MaterialTheme.typography.bodySmall,color=Quiet)
+        }
+    }
+}
 
 @Composable internal fun ObservationControls(state: OperatorViewState,actions: OperatorActions,addContext: ()->Unit) {Panel {
     val runtime=state.runtime
@@ -51,25 +67,23 @@ import ai.opstate.rokid.phone.runtime.SessionMode
             OutlinedButton(addContext,enabled=!state.busy,modifier=Modifier.weight(1f).heightIn(min=48.dp),
                 shape=RoundedCornerShape(12.dp)) {Text("添加合成情境")}
         }
-        if(manual) Surface(shape=RoundedCornerShape(14.dp),color=MaterialTheme.colorScheme.surface) {
-            Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
-                Row(verticalAlignment=Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("强制服务",style=MaterialTheme.typography.titleMedium)
-                        Text("每次调用都要求模型给出服务，走另一份提示词。",style=MaterialTheme.typography.bodySmall,color=Quiet)
-                    }
-                    Switch(runtime.forceService,actions.forceService,enabled=!state.busy)
+        if(manual) Column(Modifier.fillMaxWidth().background(Canvas,RoundedCornerShape(16.dp))
+            .padding(horizontal=16.dp,vertical=18.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment=Alignment.CenterVertically,modifier=Modifier.padding(bottom=6.dp)) {
+                Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(3.dp)) {
+                    Text("强制服务",style=MaterialTheme.typography.titleMedium)
+                    Text("每次调用都要求模型给出服务，走另一份提示词。",style=MaterialTheme.typography.bodySmall,color=Quiet)
                 }
-                HorizontalDivider(color=Line)
-                Text("用哪种来源走一遍完整链路",style=MaterialTheme.typography.bodySmall,color=Quiet)
-                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(actions.capture,enabled=ready,modifier=Modifier.weight(1f).heightIn(min=44.dp),shape=RoundedCornerShape(12.dp)) {Text("拍照")}
-                    OutlinedButton(actions.pickPhoto,enabled=ready,modifier=Modifier.weight(1f).heightIn(min=44.dp),shape=RoundedCornerShape(12.dp)) {Text("选择照片")}
-                    OutlinedButton(actions.pickContext,enabled=ready,modifier=Modifier.weight(1f).heightIn(min=44.dp),shape=RoundedCornerShape(12.dp)) {Text("合成数据")}
-                }
-                Text("拍照要现场拍；选择照片和合成数据用手机上已有的内容，不用拍摄。",
-                    style=MaterialTheme.typography.bodySmall,color=Quiet)
+                Switch(runtime.forceService,actions.forceService,enabled=!state.busy)
             }
+            HorizontalDivider(color=Line,modifier=Modifier.padding(bottom=12.dp))
+            Text("用哪种来源走一遍完整链路",style=MaterialTheme.typography.labelLarge,color=Quiet,
+                modifier=Modifier.padding(start=4.dp,bottom=4.dp))
+            // Three rows, not three squeezed buttons: what separates these is what they do, and a
+            // half-width label cannot say that. Each one keeps its own line of explanation.
+            SourceRow("拍照","现在拍一张，从拍摄开始",ready,actions.capture)
+            SourceRow("选择照片","用手机上已经存下的照片",ready,actions.pickPhoto)
+            SourceRow("合成数据","用已有的一条情境",ready,actions.pickContext)
         }
     }
     if(runtime.latestImagePath!=null) {

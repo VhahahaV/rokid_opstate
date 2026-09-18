@@ -7,7 +7,8 @@ import java.net.URI
 
 @Serializable
 data class DirectModelConfig(
-    val modelId: String="qwen-3.8-max",
+    // Model ids are the provider's, dots and all: "qwen-3.8-max" is not a model, "qwen3.8-max" is.
+    val modelId: String="qwen3.8-max",
     val endpoint: String="https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
     val wireApi: String="chat_completions",
     val maxOutputTokens: Int=512,
@@ -47,9 +48,11 @@ data class DirectModelConfig(
         "endpoint" to resolvedEndpoint(),"wire_api" to wireApi,"parameters" to parameters(),"response_language" to responseLanguage,
         "timeout_ms" to timeoutMs,"decision_ttl_ms" to decisionTtlMs)
     companion object {
-        /** The two models this build offers, both on the same endpoint and parameters. */
+        /** The models this build offers, all on the same endpoint and parameters. */
         fun qwen()=DirectModelConfig()
-        fun qwenFlash()=DirectModelConfig(modelId="qwen-3.8-flash")
-        fun choices()=listOf("Qwen 3.8 Max" to qwen(),"Qwen 3.8 Flash" to qwenFlash())
+        fun qwenFlash()=DirectModelConfig(modelId="qwen3.8-flash")
+        fun qwen37Flash()=DirectModelConfig(modelId="qwen3.7-flash-2026-07-15")
+        fun choices()=listOf("Qwen 3.8 Max" to qwen(),"Qwen 3.8 Flash" to qwenFlash(),
+            "Qwen 3.7 Flash" to qwen37Flash())
     }
 }

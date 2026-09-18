@@ -2,6 +2,7 @@ package ai.opstate.rokid.phone.ui
 
 import ai.opstate.rokid.phone.runtime.DirectModelConfig
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -11,6 +12,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.serialization.json.*
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable internal fun ModelConfigurationPanel(state: OperatorViewState,actions: OperatorActions) {
     var model by remember(state.directModel) {mutableStateOf(state.directModel.modelId)}
     var endpoint by remember(state.directModel) {mutableStateOf(state.directModel.endpoint)}
@@ -40,8 +42,9 @@ import kotlinx.serialization.json.*
             SectionTitle("模型配置","DIRECT MODEL API")
             Text("手机通过 API Key 直接调用模型。",style=MaterialTheme.typography.bodyMedium,color=Quiet)
             // A choice, not a text field: the model has to match a prompt and a parser that were frozen
-            // for it, so a hand-typed id could only ever fail at request time.
-            Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+            // for it, so a hand-typed id could only ever fail at request time. Wraps, because a third
+            // choice on one line was being clipped off the edge rather than shown.
+            FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
                 DirectModelConfig.choices().forEach {(label,value)->
                     FilterChip(selected=model==value.modelId,onClick={preset(value)},enabled=editable,label={Text(label)})
                 }

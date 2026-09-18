@@ -18,7 +18,7 @@
 - `PhoneApplication.kt`：组装 SDK、配置、私有凭证和运行时依赖。
 - `runtime/StudyRuntimeEngine.kt`：单 actor 的采集/服务双模式会话。手机产品入口使用眼镜自主拍摄：采集不初始化模型或 packet 前端，服务只对眼镜触发的图片建立推理包；手机负责历史、模型、投递和回执。`StudyRuntimeService.kt` 管理前台服务、CPU 唤醒锁和带时间戳的手机定位。
 - `transport/LegacyCxrTransport.kt`：真实研究握手、clock sync、图像回传；`rokid/CxrPhoneLink.kt` / `StudyWifiDirect.kt` 管理官方 SDK 鉴权、Bluetooth 与 P2P。
-- `runtime/DirectModelClient.kt` / `DirectModelConfig.kt` / `ResponseParser.kt`：默认 `qwen-3.8-max` API Key 直连、当前画面与最多 4 张历史画面、packet envelope、冻结参数、原文与标准化结果。`RemoteHarnessClient.kt` 保留兼容路径。
+- `runtime/DirectModelClient.kt` / `DirectModelConfig.kt` / `ResponseParser.kt`：默认 `qwen3.8-max` API Key 直连、当前画面与最多 4 张历史画面、packet envelope、冻结参数、原文与标准化结果。`RemoteHarnessClient.kt` 保留兼容路径。
 - `data/StudyJournal.kt` / `StudyDatabase.kt`：Room v2、私有文件、审计链、完整导出和中断收尾。
 - `replay/LocalCollectionHistory.kt`：枚举已完成记录，校验图片哈希并读取合成数据；`PublicReplayDataset.kt` / `HistoryContinuation.kt` 管理 R6 公共历史、前缀隔离与现场续接。历史加载本身只读，不创建会话或触发服务；单次模型视觉历史最多 4 张。
 - `scenario/ScenarioPlayback.kt` / `PublicScenario.kt`：虚拟时间线、暂停/拖动和 authoring 字段隔离。
