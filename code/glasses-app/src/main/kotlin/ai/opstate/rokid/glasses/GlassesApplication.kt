@@ -23,4 +23,9 @@ class GlassesApplication : Application() {
     val displayVisible=MutableStateFlow(false)
     val visibleEvents=Channel<VisibleEvent>(32)
     val dismissEvents=Channel<String>(32)
+    override fun onCreate() {
+        super.onCreate()
+        // Arm the reboot restart here so it survives even if the wearer never opens the glasses UI.
+        BootJobService.schedule(this)
+    }
 }

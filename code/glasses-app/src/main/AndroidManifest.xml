@@ -10,7 +10,10 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Without this the service never restarts after a reboot, so the phone's handshake has no responder. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-feature android:name="android.hardware.camera.any" android:required="true" />
     <application android:name="ai.opstate.rokid.glasses.GlassesApplication" android:label="OPSTATE Glasses"
         android:theme="@style/GlassesTheme" android:allowBackup="false">
@@ -22,6 +25,17 @@
         </activity>
         <service android:name="ai.opstate.rokid.glasses.GlassesStudyService" android:exported="false"
             android:stopWithTask="false"
-            android:foregroundServiceType="camera" />
+            android:foregroundServiceType="camera|connectedDevice" />
+        <!-- The system re-schedules this persisted job after boot, which this ROM's background policy
+             allows where it refuses to deliver BOOT_COMPLETED to third-party packages. -->
+        <service android:name="ai.opstate.rokid.glasses.BootJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+        <receiver android:name="ai.opstate.rokid.glasses.BootReceiver" android:exported="true" android:enabled="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

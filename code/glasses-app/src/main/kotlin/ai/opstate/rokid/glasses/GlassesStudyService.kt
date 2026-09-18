@@ -17,6 +17,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.serialization.json.*
+import android.content.pm.ServiceInfo
 import java.net.NetworkInterface
 import java.io.File
 import java.util.UUID
@@ -33,6 +34,7 @@ private const val STATUS_REFRESH_MS=5_000L
 
 /** One actor owns commands/session/cards. Capture and transfer run as correlated child jobs. */
 class GlassesStudyService : Service() {
+    companion object { const val EXTRA_FROM_BOOT="from_boot" }
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
     private val inbox=Channel<Event>(128)
     private val graph get()=application as GlassesApplication
@@ -79,6 +81,8 @@ class GlassesStudyService : Service() {
     private var pendingTrigger=setOf<String>()
     private var lastBufferStatus=0L
     private var lastStatusSignature=""
+    private var cameraTypeActive=false
+    private var cameraWarmUpStarted=false
     private var bufferError: String?=null
     private var wakeLock: PowerManager.WakeLock?=null
     private sealed class Event {
@@ -94,9 +98,6 @@ class GlassesStudyService : Service() {
         super.onCreate()
         val notifications=getSystemService(NotificationManager::class.java)
         notifications.createNotificationChannel(NotificationChannel("study-camera","OPSTATE 拍照与采样",NotificationManager.IMPORTANCE_LOW))
-        val pending=PendingIntent.getActivity(this,0,Intent(this,MainActivity::class.java),PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        startForeground(5201,Notification.Builder(this,"study-camera").setSmallIcon(android.R.drawable.ic_menu_camera)
-            .setContentTitle("OPSTATE 眼镜").setContentText("照片先保存到眼镜，按需同步手机").setContentIntent(pending).build())
         buffer=PhotoBuffer(File(filesDir,"photo-buffer"))
         wakeLock=getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"OPSTATE:glasses-capture").apply {setReferenceCounted(false)}
         camera=AndroidCameraSession(this)
@@ -126,13 +127,34 @@ class GlassesStudyService : Service() {
             } catch(cancelled: CancellationException) { throw cancelled }
             catch(error: Exception) { android.util.Log.e("OPSTATE","GLASSES_EVENT_${error.javaClass.simpleName}") }
         }
+        scope.launch { while(isActive) { delay(if(activeSession!=null) ACTIVE_TICK_MS else IDLE_TICK_MS); inbox.send(Event.Tick) } }
+    }
+    private fun buildNotification()=Notification.Builder(this,"study-camera").setSmallIcon(android.R.drawable.ic_menu_camera)
+        .setContentTitle("OPSTATE 眼镜").setContentText("照片先保存到眼镜，按需同步手机")
+        .setContentIntent(PendingIntent.getActivity(this,0,Intent(this,MainActivity::class.java),PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
+        .build()
+    /**
+     * Claims the camera type and warms the camera. The handshake the phone runs reports `camera_ready`
+     * from this probe and refuses to settle while it is false, so it has to run on every start path,
+     * including a restart after a reboot.
+     */
+    private fun enableCameraType() {
+        if(!cameraTypeActive) {
+            cameraTypeActive=true
+            startForeground(5201,buildNotification(),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA or ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
+        }
+        if(cameraWarmUpStarted) return
+        cameraWarmUpStarted=true
         scope.launch {
             val result=runCatching { camera.openLowResolutionPreview();camera.close() }
             inbox.send(Event.CameraReady(result.exceptionOrNull()?.javaClass?.simpleName))
         }
-        scope.launch { while(isActive) { delay(if(activeSession!=null) ACTIVE_TICK_MS else IDLE_TICK_MS); inbox.send(Event.Tick) } }
     }
-    override fun onStartCommand(intent: Intent?,flags: Int,startId: Int)=START_NOT_STICKY
+    override fun onStartCommand(intent: Intent?,flags: Int,startId: Int): Int {
+        enableCameraType()
+        return START_NOT_STICKY
+    }
     override fun onBind(intent: Intent?)=null
     private fun phoneNow()=System.currentTimeMillis()+phoneMinusGlassesMs
     private suspend fun send(type: String,payload: JsonObject,request: StudyMessage?=null,key: String?=null) {
@@ -235,6 +257,9 @@ class GlassesStudyService : Service() {
                     images=SessionImageServer(SystemClock::elapsedRealtime)
                     lastHeartbeatElapsed=SystemClock.elapsedRealtime()
                     graph.mutableUi.update { it.copy(sessionId=activeSession,card=null) }
+                    // A service restarted after a reboot may have been brought up by the job before any UI
+                    // existed; make sure the camera type is claimed before capture begins.
+                    enableCameraType()
                     imu.start()
                 }
                 paused=false

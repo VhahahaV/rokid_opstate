@@ -128,3 +128,28 @@ adb shell run-as ai.opstate.rokid.phone cp /data/local/tmp/prefs.xml \
 The UUID rotates across pairings — two values observed three weeks apart differed —
 so always read the current value rather than reusing an old one. Treat the value as a
 credential: it is half of what the RFCOMM connect needs, and it must not be committed.
+
+## 9. Restarting the glasses service after a reboot
+
+The service owns the CXR subscription, so after a reboot nothing answers the phone's handshake and
+the glasses looks disconnected however healthy the Bluetooth link is. It also reports
+`camera_ready: false` until its warm-up probe runs, and the phone refuses to settle the handshake
+while that is false.
+
+This ROM does not deliver `BOOT_COMPLETED` to third-party packages:
+
+```text
+W BroadcastQueue: Background execution Third-Party APP not allowed:
+  receiving Intent { act=android.intent.action.BOOT_COMPLETED } to ai.opstate.rokid.glasses/.BootReceiver
+```
+
+`BootReceiver` is kept for firmware that allows it, but the working path is `BootJobService`: a
+persisted periodic job is held in the system's own job store and re-scheduled after boot without any
+broadcast reaching the app. It starts the service, which claims the camera type and warms the camera.
+
+Timing: the job's next run is `lastRun + 15 min`, so a glasses that had been running longer than that
+before the reboot starts within seconds of booting; a reboot immediately after a job run can wait out
+the remainder. Launching OPSTATE by hand is always immediate.
+
+Do not `force-stop` the app when testing this: force-stopping cancels the app's jobs, so the job has
+to be re-registered by launching the app before the next reboot.

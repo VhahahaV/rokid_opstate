@@ -100,8 +100,15 @@ class LegacyCxrTransport(
         Result.success(Unit)
     } catch(cancelled: CancellationException) {
         if(cancelled !is TimeoutCancellationException) throw cancelled
+        // The CXR link came up but the glasses app never answered the handshake. That is exactly the
+        // state after a glasses reboot, before its service has started, so keep retrying rather than
+        // reporting a failure the operator would have to resolve by hand.
+        reconnect()
         Result.failure(IllegalStateException("GLASSES_APP_HANDSHAKE_TIMEOUT"))
-    } catch(error: Exception) { Result.failure(error) }
+    } catch(error: Exception) {
+        reconnect()
+        Result.failure(error)
+    }
     private fun reconnect() {
         if(reconnectJob?.isActive==true) return
         val device=selected ?: return
