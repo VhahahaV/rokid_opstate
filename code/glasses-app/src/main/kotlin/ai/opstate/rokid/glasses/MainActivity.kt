@@ -27,31 +27,22 @@ import ai.opstate.rokid.glasses.display.VisibleDrawAcknowledger
 import kotlinx.coroutines.*
 
 class MainActivity : Activity() {
-    companion object {
-        /**
-         * Window brightness for anything this page draws.
-         *
-         * The panel is a green micro-LED waveguide: when it is lit it glows across its whole area, so
-         * the system brightness this window used to inherit - 204/255 on the wearer's unit - reads as
-         * glare rather than as text. This sits well below it and is meant to be tuned on the glasses:
-         * lower is calmer but eventually unreadable, and much above 0.4 brings the waveguide glow back.
-         */
-        internal const val CONTENT_BRIGHTNESS=0.3f
-    }
     /**
-     * Only the green channel reaches the eye, so every colour collapses to a level of green and
-     * hierarchy has to come from brightness rather than hue. These are a luminance ladder, kept in one
-     * place so the whole display stays consistent: the title is the brightest thing on screen and each
-     * step below it is dimmer.
+     * The panel is a single-wavelength display: one emitter hue, and the only thing that varies is how
+     * much of it a pixel emits. So the whole display is drawn in the emitter green and alpha is the
+     * only ink there is. White and grey would land on exactly this green anyway - they would just spend
+     * the most light the panel can make to say nothing extra.
+     *
+     * Every value here is light, not decoration. Light from the combiner scatters back across the field
+     * of view, so a large or bright area does not read as "something drawn": it reads as a green wash
+     * over whatever the wearer is actually looking at. That is why the ladder stops well short of the
+     * emitter's maximum, and why nothing on this display is ever filled in.
      */
-    private val Primary=Color.rgb(255,255,255)
-    private val Body=Color.rgb(216,216,216)
-    private val Meta=Color.rgb(152,152,152)
-    private val Faint=Color.rgb(104,104,104)
-    private val Line=Color.rgb(58,58,58)
-    /** The brand mint, dimmed from #88FFE3. At G=255 it is the brightest thing the panel can make,
-     *  which is a lot of light for a rule whose only job is to say "this one is a service". */
-    private val Accent=Color.rgb(120,214,178)
+    private fun ink(alpha: Int)=Color.argb(alpha,76,255,151)
+    private val Strong=ink(225)
+    private val Body=ink(170)
+    private val Meta=ink(118)
+    private val Faint=ink(80)
     private val graph get()=application as GlassesApplication
     private val scope=MainScope()
     private lateinit var content: LinearLayout
@@ -161,8 +152,7 @@ class MainActivity : Activity() {
             support(state.setupError ?: when {state.phoneConnected->"在手机上选择模式并开始";!state.cameraReady->"相机准备中…";else->"轻触侧边，选择或配对手机"},3)
             if(state.bufferedPhotos>0) { gap(18f);meta("眼镜还有 ${state.bufferedPhotos} 张照片\n开始会话后恢复同步",3) }
             else if(state.phoneConnected) { gap(18f);meta("照片先存眼镜，按手机设置分批同步") }
-            gap(18f)
-            divider(); gap(12f)
+            gap(20f)
             footer("单击收起 · 双击返回桌面")
         } else if(!state.phoneConnected) {
             eyebrow("OPSTATE")
@@ -170,8 +160,7 @@ class MainActivity : Activity() {
             hero(if(state.collectingLocally) "正在本地采集" else "手机连接已中断")
             gap(12f)
             support("眼镜待同步 ${state.bufferedPhotos} 张",2)
-            gap(18f)
-            divider(); gap(12f)
+            gap(20f)
             footer("轻触侧边查找手机")
         } else if(state.demoStatus!=null) {
             val demo=state.demoStatus
@@ -185,8 +174,7 @@ class MainActivity : Activity() {
                     support("手机 ${demo.captures} 张 · 待同步 ${state.bufferedPhotos} 张",2)
                     gap(8f)
                     meta("每 ${demo.intervalSeconds} 秒拍摄")
-                    gap(18f)
-                    divider(); gap(12f)
+                    gap(20f)
                     footer("单击收起 · 双击返回桌面\n采集继续，停止请在手机结束")
                 }
                 updateDisplayPolicy()
@@ -200,14 +188,13 @@ class MainActivity : Activity() {
                 meta("当前情境")
                 gap(6f)
                 // The status view carries two footers, so its body gets fewer lines than a card's.
-                support(demo.context,5)
+                support(demo.context,7)
                 gap(14f)
                 meta("${demo.captures} 次观察    ${demo.receipts} 条服务回执")
                 gap(8f)
                 footer(if(demo.automaticCapture) "每 60 秒自动观察 · 手机可手动拍照" else "自动观察已关闭 · 手机可手动拍照")
             }
-            gap(18f)
-            divider(); gap(12f)
+            gap(20f)
             footer("单击收起 · 双击返回桌面")
         }
         // An active session with no card is intentionally a completely black, silent view.
@@ -233,17 +220,22 @@ class MainActivity : Activity() {
         // Only a card earns a lit panel: its visible ACK needs the screen interactive. Every other view -
         // connection state, collection status, sensor notices - waits for a tap instead of burning the
         // whole panel, which on these glasses lights every pixel whether or not anything is drawn on it.
-        if(showing && !passiveStatus && displayed!=null) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        val lit=showing && !passiveStatus && displayed!=null
+        if(lit) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        // Deliberately not the system brightness: a waveguide that glows across its whole area whenever
-        // it is lit turns the wearer's 80% setting into glare rather than legibility. Writing the
-        // attributes re-lays-out the window and this runs on every render and every DPAD step, so only
-        // write when the value changed - and never while the window is on its way out, where the write
-        // would land on a decor view the window manager has already detached.
-        val brightness=if(showing) CONTENT_BRIGHTNESS else 0f
-        if(!isFinishing && !isDestroyed && window.attributes.screenBrightness!=brightness) {
-            window.attributes=window.attributes.apply { screenBrightness=brightness }
-        }
+        // This window never sets screenBrightness, and that is a finding rather than an omission.
+        //
+        // Writing that attribute - at any value, including the system-brightness sentinel this page
+        // used to defer to - makes this device composite the whole frame over a #101010 veil. Measured
+        // on the glasses: with an override set, 0% of the frame came back true black and every
+        // background pixel sat at (16,16,16); with the attribute left alone, 98% of it is true black,
+        // which is what the working RealTopia HUD on this same hardware shows. On a single-wavelength
+        // panel that veil is a uniform green field across the entire display - precisely the "green
+        // background" the wearer reports - and no amount of redrawing the card could remove it, because
+        // the card was never what was lighting up.
+        //
+        // Brightness on these glasses belongs to the wearer's own setting. This page's only light
+        // control is its ink.
         graph.displayVisible.value=showing && content.hasWindowFocus() && !isFinishing
     }
     private fun backAction() {
@@ -263,19 +255,19 @@ class MainActivity : Activity() {
      */
     private fun cardView(card: GlassesCard) {
         val service=card.kind in setOf("SERVICE","REPLAY")
-        eyebrow(when(card.kind) {
-            "SERVICE","REPLAY"->"OPSTATE · 主动服务"
-            "STATUS"->"OPSTATE · 会话状态"
-            else->"OPSTATE · 情境更新"
-        },accented=service)
-        gap(12f)
+        val kind=when(card.kind) {
+            "SERVICE","REPLAY"->"主动服务"
+            "STATUS"->"会话状态"
+            else->"情境更新"
+        }
+        // A service earns a marker and its mode; both ride in the eyebrow line, so the accent costs a
+        // glyph instead of a bar of light.
+        eyebrow(if(service) "◆ OPSTATE · $kind · ${serviceModeLabel(card.mode)}" else "· OPSTATE · $kind",service)
+        gap(10f)
         hero(card.title)
-        if(service) { gap(14f);chip(serviceModeLabel(card.mode)) }
-        gap(14f)
-        support(card.body)
-        gap(18f)
-        divider()
         gap(12f)
+        support(card.body)
+        gap(16f)
         footer("单击收起 · 双击返回桌面")
     }
     private fun serviceModeLabel(mode: String)=when(mode) {
@@ -285,9 +277,6 @@ class MainActivity : Activity() {
     private fun dp(value: Float)=(value*density).toInt()
     /** The rhythm between blocks lives here rather than in padding on every line. */
     private fun gap(value: Float) { content.addView(View(this).apply { layoutParams=LinearLayout.LayoutParams(1,dp(value)) }) }
-    private fun divider() { content.addView(View(this).apply {
-        setBackgroundColor(Line); layoutParams=LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,dp(1f).coerceAtLeast(1))
-    }) }
     private fun line(value: String,size: Float,color: Int,lines: Int,leading: Float,bold: Boolean=false,spacing: Float=0f) {
         content.addView(TextView(this).apply {
             text=value; textSize=size; setTextColor(color); maxLines=lines; ellipsize=TextUtils.TruncateAt.END
@@ -297,49 +286,27 @@ class MainActivity : Activity() {
             if(bold) typeface=Typeface.DEFAULT_BOLD
         })
     }
-    /** What kind of thing this is: the quietest, smallest line on screen. */
-    private fun eyebrow(value: String,accented: Boolean=false) {
-        val row=LinearLayout(this).apply { orientation=LinearLayout.HORIZONTAL; gravity=Gravity.CENTER_VERTICAL }
-        // The one piece of colour meant to catch the eye, kept deliberately small: on this panel a filled
-        // block of full-strength green is the brightest thing it can draw, which a decoration has not
-        // earned. A slim rule says "service" without lighting up a bar across the screen.
-        if(accented) row.addView(View(this).apply {
-            setBackgroundColor(Accent)
-            layoutParams=LinearLayout.LayoutParams(dp(2f).coerceAtLeast(2),dp(14f)).apply { rightMargin=dp(10f) }
-        })
-        row.addView(TextView(this).apply { text=value; textSize=12f; setTextColor(Meta); letterSpacing=0.08f })
-        content.addView(row)
-    }
-    /** The one line the wearer has to read first, and the brightest thing on screen. */
-    private fun hero(value: String,lines: Int=2)=line(value,24f,Primary,lines,1.25f,bold=true)
+    /** What kind of thing this is. The leading marker is the accent; nothing is drawn under it. */
+    private fun eyebrow(value: String,accented: Boolean=false)=line(value,11f,if(accented) Body else Meta,1,1.3f,spacing=0.06f)
     /**
-     * The card's substance, capped at seven lines. That is what fits under a two-line title once the
-     * header and footer are paid for, and the footer has to stay: it is the only thing that teaches
-     * the wearer how to dismiss a card, and a card nobody dismisses sits out its whole time-to-live.
+     * The smallest type that still reads through the combiner, and much smaller than a phone would use.
+     * On this display the size of the glyphs is the amount of light behind them, and a large bright
+     * block is exactly what comes back as a wash over the room. Sizing down also pays for itself: the
+     * full 140-codepoint service body fits at this size, where it had to be cut before.
      */
-    private fun support(value: String,lines: Int=7)=line(value,17f,Body,lines,1.4f)
-    private fun meta(value: String,lines: Int=3)=line(value,14f,Meta,lines,1.35f)
-    private fun footer(value: String)=line(value,12f,Faint,2,1.3f)
+    private fun hero(value: String,lines: Int=2)=line(value,18f,Strong,lines,1.3f,bold=true)
+    private fun support(value: String,lines: Int=9)=line(value,13f,Body,lines,1.5f)
+    private fun meta(value: String,lines: Int=3)=line(value,11f,Meta,lines,1.4f)
+    private fun footer(value: String)=line(value,10f,Faint,2,1.4f)
     /**
-     * An outlined mode chip: a thin rule of light rather than a filled block of it.
-     *
-     * A vertical LinearLayout hands its children MATCH_PARENT width, so the outline has to be told to
-     * hug its label - otherwise this "small" chip draws a box the full width of the screen, which is
-     * most of the light the accent bar it replaced used to spend.
+     * The only control on the glasses. A filled button would be the largest single lit area this page
+     * could draw, so it is a word with a hairline around it and nothing inside.
      */
-    private fun chip(value: String) { content.addView(TextView(this).apply {
-        text=value; textSize=12f; setTextColor(Accent); letterSpacing=0.06f
-        setPadding(dp(9f),dp(4f),dp(9f),dp(4f))
-        layoutParams=LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,LinearLayout.LayoutParams.WRAP_CONTENT)
-        background=GradientDrawable().apply { setColor(Color.TRANSPARENT); setStroke(dp(1f).coerceAtLeast(1),Accent); cornerRadius=dp(4f).toFloat() }
-    }) }
-    /** The only control on the glasses, kept to an outline so it does not light a filled block. */
     private fun outlineButton(label: String,onClick: ()->Unit) { content.addView(TextView(this).apply {
-        text=label; textSize=17f; setTextColor(Body); gravity=Gravity.CENTER
-        setPadding(dp(22f),dp(13f),dp(22f),dp(13f))
-        // Same reason as the chip: an outline that spans the screen is a lit rectangle with a hole.
+        text=label; textSize=14f; setTextColor(Body); gravity=Gravity.CENTER
+        setPadding(dp(18f),dp(9f),dp(18f),dp(9f))
         layoutParams=LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,LinearLayout.LayoutParams.WRAP_CONTENT)
-        background=GradientDrawable().apply { setColor(Color.TRANSPARENT); setStroke(dp(1f).coerceAtLeast(1),Meta); cornerRadius=dp(10f).toFloat() }
+        background=GradientDrawable().apply { setColor(Color.TRANSPARENT); setStroke(dp(1f).coerceAtLeast(1),Faint); cornerRadius=dp(8f).toFloat() }
         isClickable=true; setOnClickListener { onClick() }
     }) }
     override fun onKeyUp(keyCode: Int,event: KeyEvent): Boolean {
@@ -396,9 +363,7 @@ class MainActivity : Activity() {
         hero("连接手机")
         gap(12f)
         support(pairingHint,3)
-        gap(18f)
-        divider()
-        gap(12f)
+        gap(16f)
         val labels=phones.values.map {"${it.name ?: "未命名设备"} · ${if(it.bondState==BluetoothDevice.BOND_BONDED) "已配对" else "可配对"}"}+
             listOf("重新搜索附近手机","系统蓝牙与配对")
         phoneIndex=phoneIndex.coerceIn(0,labels.lastIndex)
@@ -407,31 +372,23 @@ class MainActivity : Activity() {
             val index=first+offset
             phoneRow(label,index==phoneIndex) {phoneIndex=index;selectPhone()}
         }
-        gap(18f)
-        divider()
-        gap(12f)
+        gap(16f)
         footer("前后滑动选择 · 单击确认 · 双击返回")
         updateDisplayPolicy()
     }
     /**
-     * A selectable row. Selection is carried by both the marker and the label's brightness. The row
-     * owns its own vertical space rather than sitting behind a spacer, so a tap that lands between
-     * two rows belongs to nobody.
+     * A selectable row. The cursor and the label's brightness both carry the selection; there is no
+     * button behind it and no rule beside it, because on this panel either would cost more light than
+     * the word it decorates. The row owns its own vertical space rather than sitting behind a spacer,
+     * so a tap that lands between two rows belongs to nobody.
      */
     private fun phoneRow(label: String,selected: Boolean,onClick: ()->Unit) {
-        val row=LinearLayout(this).apply {
-            orientation=LinearLayout.HORIZONTAL; gravity=Gravity.CENTER_VERTICAL
-            setPadding(0,dp(16f),0,dp(16f)); isClickable=true; setOnClickListener { onClick() }
-        }
-        row.addView(View(this).apply {
-            setBackgroundColor(if(selected) Accent else Color.TRANSPARENT)
-            layoutParams=LinearLayout.LayoutParams(dp(2f).coerceAtLeast(2),dp(16f)).apply { rightMargin=dp(12f) }
+        content.addView(TextView(this).apply {
+            text=(if(selected) "› " else "· ")+label
+            textSize=14f; maxLines=2; ellipsize=TextUtils.TruncateAt.END
+            setTextColor(if(selected) Strong else Meta)
+            setPadding(0,dp(14f),0,dp(14f)); isClickable=true; setOnClickListener { onClick() }
         })
-        row.addView(TextView(this).apply {
-            text=label; textSize=17f; maxLines=2; ellipsize=TextUtils.TruncateAt.END
-            setTextColor(if(selected) Primary else Meta)
-        })
-        content.addView(row)
     }
     private fun selectPhone() {
         val device=phones.values.elementAtOrNull(phoneIndex)

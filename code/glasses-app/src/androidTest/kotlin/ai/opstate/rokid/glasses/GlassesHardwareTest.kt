@@ -21,6 +21,18 @@ class GlassesHardwareTest {
     private val instrumentation get()=InstrumentationRegistry.getInstrumentation()
     private val context get()=instrumentation.targetContext
     private fun activity(): MainActivity = instrumentation.startActivitySync(Intent(context,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+    /**
+     * The page must never write screenBrightness, at any value.
+     *
+     * Writing it makes this device composite the whole frame over a #101010 veil - measured: 0% of the
+     * frame comes back true black with an override set, against ~98% without one. The panel is
+     * single-wavelength, so that veil is a uniform green field across the entire display, which is
+     * exactly what a wearer reports as a green background behind the text. No card redesign can remove
+     * it, because the card was never what was lighting up.
+     */
+    private fun assertNeverVeils(activity: MainActivity) = assertEquals(
+        "the window must not set a brightness override",
+        WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE,activity.window.attributes.screenBrightness,0f)
     @Test fun measuresColdAndWarmCameraCaptureOnDevice() = runBlocking {
         val activity=activity()
         val app=context.applicationContext as GlassesApplication
@@ -59,7 +71,7 @@ class GlassesHardwareTest {
             instrumentation.runOnMainSync {
                 activity.onKeyUp(KeyEvent.KEYCODE_ENTER,KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ENTER))
                 assertEquals(0,activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                assertEquals(0f,activity.window.attributes.screenBrightness,0f)
+                assertNeverVeils(activity)
                 assertFalse(app.displayVisible.value)
             }
             app.mutableUi.value=app.ui.value.copy(bufferedPhotos=3,phoneConnected=false)
@@ -70,9 +82,9 @@ class GlassesHardwareTest {
                 activity.onKeyUp(KeyEvent.KEYCODE_ENTER,KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ENTER))
                 // Re-expanding shows the collection status again, and that view stays passive: only a
                 // card holds the panel lit, because only a card needs an interactive screen for the
-                // two-frame visible ACK. It still renders, at the dimmed content brightness.
+                // two-frame visible ACK.
                 assertEquals(0,activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                assertEquals(MainActivity.CONTENT_BRIGHTNESS,activity.window.attributes.screenBrightness,0f)
+                assertNeverVeils(activity)
             }
             // A card is the exception to that passivity, and the reason is the ACK: the two-frame
             // visible acknowledgement cannot be produced on a panel that has already gone dark.
@@ -81,7 +93,8 @@ class GlassesHardwareTest {
             delay(100)
             instrumentation.runOnMainSync {
                 assertTrue(activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON != 0)
-                assertEquals(MainActivity.CONTENT_BRIGHTNESS,activity.window.attributes.screenBrightness,0f)
+                // Even lit, a card must not reach for brightness to make itself readable.
+                assertNeverVeils(activity)
                 activity.onKeyUp(KeyEvent.KEYCODE_BACK,KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_BACK))
                 assertTrue(activity.isFinishing)
                 assertFalse(app.displayVisible.value)

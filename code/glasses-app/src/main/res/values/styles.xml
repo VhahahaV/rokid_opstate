@@ -3,8 +3,11 @@
         <item name="android:fontFamily">sans</item>
         <item name="android:windowBackground">#000000</item>
         <item name="android:windowFullscreen">true</item>
-        <!-- Dimmed from #88FFE3: the panel is monochrome green, so a G=255 accent is the brightest
-             thing it can draw, and this one only has to be recognisable. -->
-        <item name="android:colorAccent">#78D6B2</item>
+        <item name="android:navigationBarColor">#000000</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <!-- The panel's own emitter hue: it is the only colour that reaches the eye, so the framework's
+             accent is matched to it rather than to the brand mint. -->
+        <item name="android:colorAccent">#4CFF97</item>
     </style>
 </resources>
