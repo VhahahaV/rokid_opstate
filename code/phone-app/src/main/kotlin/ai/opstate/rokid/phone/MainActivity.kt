@@ -115,6 +115,8 @@ class MainActivity : ComponentActivity() {
                         }
                     },
                     export={exportSession(selected!!.session.sessionId)},delete={deleteSession(selected!!.session.sessionId)},
+                    addContext={type,title,body,at->addRecordContext(selected!!.session.sessionId,type,title,body,at)},
+                    importContext={importRecordContext(selected!!.session.sessionId)},
                     refresh={openSession(selected.session.sessionId)},dismissMessage={viewState.update {it.copy(message=null)}},logs={openLogs(selected.session.sessionId)})
                 } else screenState.SaveableStateProvider("operator") { OperatorScreen(state,OperatorActions(
                 scan={ scan() },reconnect={ operate { val device=graph.link.savedDevice() ?: error("NO_SAVED_DEVICE")
@@ -203,6 +205,37 @@ class MainActivity : ComponentActivity() {
     private fun openSession(id: String)=operate {
         val loaded=withContext(Dispatchers.IO) {SessionReviewRepository(graph.journal).load(id)}
         viewState.update {it.copy(selectedSession=loaded,selectedTrial=null,busy=false)}
+    }
+    private fun addRecordContext(id: String,type: String,title: String,body: String,at: Long)=operate {
+        withContext(Dispatchers.IO) {graph.journal.addSyntheticContext(id,type,title,body,at)}
+        val loaded=withContext(Dispatchers.IO) {SessionReviewRepository(graph.journal).load(id)}
+        viewState.update {it.copy(selectedSession=loaded,selectedTrial=null,busy=false)}
+        message("已插入一条情境")
+    }
+    /**
+     * Imports context authored outside the app. The file is a JSON array of
+     * `{type,title,body,at_epoch_ms}`; it is removed once read so a stale file cannot be re-imported
+     * into another record.
+     */
+    private fun importRecordContext(id: String)=operate {
+        val file=File(filesDir,"synthetic-import.json")
+        val added=withContext(Dispatchers.IO) {
+            check(file.isFile) { "SYNTHETIC_IMPORT_FILE_MISSING" }
+            val rows=StudyWire.json.parseToJsonElement(file.readText()).jsonArray
+            rows.forEach { row ->
+                val o=row.jsonObject
+                graph.journal.addSyntheticContext(id,
+                    o["type"]?.jsonPrimitive?.contentOrNull ?: "NOTE",
+                    o["title"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    o["body"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    o["at_epoch_ms"]?.jsonPrimitive?.longOrNull ?: error("SYNTHETIC_IMPORT_TIME_REQUIRED"))
+            }
+            file.delete()
+            rows.size
+        }
+        val loaded=withContext(Dispatchers.IO) {SessionReviewRepository(graph.journal).load(id)}
+        viewState.update {it.copy(selectedSession=loaded,selectedTrial=null,busy=false)}
+        message("已导入 $added 条合成情境")
     }
     private fun exportSession(id: String)=operate {
         pendingExport=withContext(Dispatchers.IO) {graph.journal.export(id)}

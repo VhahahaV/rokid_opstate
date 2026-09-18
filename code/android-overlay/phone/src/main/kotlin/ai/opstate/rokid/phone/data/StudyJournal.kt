@@ -191,6 +191,37 @@ class StudyJournal(private val context: Context,val database: StudyDatabase) {
             directory.deleteRecursively()
         }
     }
+    /**
+     * Appends operator-authored context to a record, including a finished one.
+     *
+     * The live path refuses to add context outside a SERVICE session, but reviewing a record means
+     * enriching history after the fact, so this writes the same two streams the runtime does: an
+     * observation the timeline renders beside the photos, and a context event recording that an
+     * operator supplied it. Appending keeps the chain valid and leaves the STOPPED checkpoint in
+     * place, so the record stays exportable.
+     */
+    @Synchronized fun addSyntheticContext(id: String,type: String,title: String,body: String,atEpochMs: Long): String {
+        require(type in setOf("EMAIL","CALENDAR","MESSAGE","NOTE")) { "CONTEXT_INPUT_INVALID" }
+        val trimmedTitle=title.trim();val trimmedBody=body.trim()
+        require(trimmedTitle.isNotEmpty() && trimmedTitle.length<=80 && trimmedBody.length<=4000) { "CONTEXT_INPUT_INVALID" }
+        val session=requireNotNull(dao.session(id)) { "UNKNOWN_SESSION" }
+        val text="[$type] $trimmedTitle\n$trimmedBody"
+        val eventId="manual-${UUID.randomUUID()}"
+        database.runInTransaction {
+            append(id,"observations","SYNTHETIC_CONTEXT",StudyWire.payload(
+                "observation_id" to eventId,"kind" to "SYNTHETIC_CONTEXT","asset_id" to null,
+                "occurred_at_epoch_ms" to atEpochMs,"available_at_epoch_ms" to atEpochMs,
+                "public_text" to text,"source" to "OPERATOR_SYNTHETIC","synthetic_type" to type,
+                "title" to trimmedTitle,"body" to trimmedBody,
+                "added_after_session_end" to (session.endedAtEpochMs!=null)),atEpochMs)
+            append(id,"context_events","OPERATOR_CONTEXT_ADDED",StudyWire.payload(
+                "event_id" to eventId,"synthetic_type" to type,"title" to trimmedTitle,
+                "public_text" to text,"occurred_at_epoch_ms" to atEpochMs,
+                "source" to "OPERATOR_SYNTHETIC"),atEpochMs)
+        }
+        return eventId
+    }
+
     /** The name a record is listed under is `participantAlias`; the audit chain stores no alias, so
      *  renaming cannot invalidate it. */
     @Synchronized fun rename(id: String,name: String) {

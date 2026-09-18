@@ -24,6 +24,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import ai.opstate.rokid.phone.review.CapturedPhoto
+import ai.opstate.rokid.phone.review.ContextEntry
+import ai.opstate.rokid.phone.review.TimelineItem
 import ai.opstate.rokid.phone.review.string
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -88,6 +90,50 @@ internal fun LazyListScope.photoGrid(photos: List<CapturedPhoto>,open: (String)-
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                 row.forEach {photo->PhotoTile(photo,Modifier.weight(1f).aspectRatio(1f)) {open(photo.id)}}
                 repeat(3-row.size) {Spacer(Modifier.weight(1f))}
+            }
+        }
+    }
+}
+
+/** A synthetic context note as it sits between captures in the timeline. */
+@Composable internal fun ContextNoteCard(context: ContextEntry) {
+    Surface(shape=RoundedCornerShape(14.dp),color=MaterialTheme.colorScheme.surface,modifier=Modifier.fillMaxWidth().testTag("context-${context.id}")) {
+        Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment=Alignment.CenterVertically) {
+                Tag(if(context.type=="NOTE") "备忘" else context.type,Ink)
+                Spacer(Modifier.width(8.dp))
+                Text(photoTime(context.occurredAt),style=MaterialTheme.typography.bodySmall,color=Quiet)
+            }
+            Text(context.title,style=MaterialTheme.typography.titleMedium)
+            Text(context.text,style=MaterialTheme.typography.bodyMedium,color=Quiet)
+        }
+    }
+}
+
+/**
+ * Captures and context in one visual order. Consecutive captures share a grid slot, so a long run stays
+ * compact, while a context note takes a full row at the point it belongs.
+ */
+internal fun LazyListScope.timeline(items: List<TimelineItem>,open: (String)->Unit) {
+    val shotsPerDay=items.filterIsInstance<TimelineItem.Shots>().flatMap {it.photos}.groupBy {photoTime(it.capturedAt,"yyyy年MM月dd日")}
+    val notesPerDay=items.filterIsInstance<TimelineItem.Note>().map {it.context}.groupBy {photoTime(it.occurredAt,"yyyy年MM月dd日")}
+    var lastDay: String?=null
+    items.forEachIndexed { index,item ->
+        val day=photoTime(item.at,"yyyy年MM月dd日")
+        if(day!=lastDay) {
+            lastDay=day
+            item(key="day-$day-at-$index") {
+                val notes=notesPerDay[day]?.size ?: 0
+                Text("$day · ${shotsPerDay[day]?.size ?: 0} 张${if(notes>0) " · $notes 条情境" else ""}",style=MaterialTheme.typography.titleSmall,color=Quiet)
+            }
+        }
+        when(item) {
+            is TimelineItem.Note -> item(key="note-${item.context.id}") {ContextNoteCard(item.context)}
+            is TimelineItem.Shots -> items(item.photos.chunked(3),key={"row-${it.first().id}"}) { row ->
+                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                    row.forEach {photo->PhotoTile(photo,Modifier.weight(1f).aspectRatio(1f)) {open(photo.id)}}
+                    repeat(3-row.size) {Spacer(Modifier.weight(1f))}
+                }
             }
         }
     }
