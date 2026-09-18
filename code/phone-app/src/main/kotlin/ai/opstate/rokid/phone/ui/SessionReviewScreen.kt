@@ -114,11 +114,9 @@ import java.util.Locale
                     TextButton({confirmDelete=true},enabled=!busy && review.phase=="STOPPED") {Text("删除这次记录",color=MaterialTheme.colorScheme.error)}
                 }}
             } else {
-                if(review.photos.isNotEmpty() || review.contexts.isNotEmpty()) {
-                    item {Text("照片与情境 · ${review.photos.size} 张 / ${review.contexts.size} 条",style=MaterialTheme.typography.titleLarge)}
-                    item { TimelineToolbar(descending,{descending=!descending},insertOpen={insertOpen=true},importContext,enabled=!busy) }
-                    timeline(timeline) {selectedPhoto=it}
-                }
+                // What you came to do leads: the summary, then the modules that act on the record, and
+                // only then the raw timeline. Opening a record is usually about exporting it or reading
+                // its trials, not about scrolling back through photographs.
                 item { Surface(shape=RoundedCornerShape(20.dp),color=Ink) {
                     Column(Modifier.fillMaxWidth().padding(22.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
                         Text(if(review.session.conditionCode=="CONTRACT_REPLAY") "CONTRACT REPLAY" else "FIELD SESSION",style=MaterialTheme.typography.labelSmall,color=Canvas.copy(alpha=.7f))
@@ -168,6 +166,11 @@ import java.util.Locale
                             Icon(Icons.Default.ArrowForward,"查看试次",Modifier.size(18.dp),tint=Quiet)
                         }
                     }
+                }
+                if(review.photos.isNotEmpty() || review.contexts.isNotEmpty()) {
+                    item {Text("照片与情境 · ${review.photos.size} 张 / ${review.contexts.size} 条",style=MaterialTheme.typography.titleLarge)}
+                    item { TimelineToolbar(descending,{descending=!descending},insertOpen={insertOpen=true},importContext,enabled=!busy) }
+                    timeline(timeline) {selectedPhoto=it}
                 }
                 item { Column {
                     SelectionContainer {Text(review.session.sessionId,style=MaterialTheme.typography.bodySmall,fontFamily=FontFamily.Monospace,color=Quiet)}
