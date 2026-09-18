@@ -23,11 +23,13 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/** How many of a record's captures to use as history; 0 means all of them. */
+internal const val PARTIAL_HISTORY=4
 data class SessionLaunchOptions(val alias: String,val scenarioPositionMs: Long=0,val historyIndex: Int?=null,val demoMode: Boolean=true,val shadowInference: Boolean=false,
     val profile: String="BENCHMARK_ALIGNED",val mode: SessionMode=SessionMode.SERVICE,val captureIntervalMs: Long=60_000,
-    val collectionHistorySessionId: String?=null,val collectionHistoryImageLimit: Int=4,val syncBatchSize: Int=60)
+    val collectionHistorySessionId: String?=null,val collectionHistoryImageLimit: Int=0,val syncBatchSize: Int=60)
 
-data class ImportedHistory(val sourceSessionId: String?=null,val publicIndex: Int?=null,val imageLimit: Int=4,
+data class ImportedHistory(val sourceSessionId: String?=null,val publicIndex: Int?=null,val imageLimit: Int=0,
     val title: String,val images: Int,val contexts: Int,val recent: List<String> = emptyList())
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -75,7 +77,7 @@ data class ImportedHistory(val sourceSessionId: String?=null,val publicIndex: In
             if(!state.peerReady) connect() else actions.start(SessionLaunchOptions(
                 alias=alias.ifBlank {SimpleDateFormat("MM-dd HH:mm",Locale.CHINA).format(Date())},mode=mode,captureIntervalMs=interval,syncBatchSize=batch.toInt(),
                 demoMode=false,historyIndex=history?.publicIndex,collectionHistorySessionId=history?.sourceSessionId,
-                collectionHistoryImageLimit=history?.imageLimit ?: 4))
+                collectionHistoryImageLimit=history?.imageLimit ?: 0))
         }
         state.runtime.error?.let {Text(sessionError(it),color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)}
     }
@@ -85,7 +87,8 @@ data class ImportedHistory(val sourceSessionId: String?=null,val publicIndex: In
 @Composable internal fun HistoryImportSheet(state: OperatorViewState,actions: OperatorActions,onDismiss: ()->Unit) {
     var source by rememberSaveable {mutableStateOf(if(state.collections.isEmpty()) "R6" else "LOCAL")}
     var selectedId by rememberSaveable {mutableStateOf(state.collections.firstOrNull()?.sessionId)}
-    var limit by rememberSaveable {mutableIntStateOf(4)}
+    // 0 seeds the session with the whole record; the model request still sends only the last four frames.
+    var limit by rememberSaveable {mutableIntStateOf(0)}
     var index by rememberSaveable {mutableIntStateOf(0)}
     val selected=state.collections.firstOrNull {it.sessionId==selectedId}
     LaunchedEffect(source,index) {if(source=="R6" && state.dataset!=null) actions.previewHistory(index)}
@@ -107,11 +110,12 @@ data class ImportedHistory(val sourceSessionId: String?=null,val publicIndex: In
                         }},modifier=Modifier.fillMaxWidth())
                     }}
                     if(selected!=null) item {
-                        Text("加载最近的图片",style=MaterialTheme.typography.titleMedium)
-                        FlowRow(horizontalArrangement=Arrangement.spacedBy(6.dp)) {(1..selected.validImages.coerceIn(1,4)).forEach {n->
-                            FilterChip(limit.coerceAtMost(selected.validImages.coerceAtLeast(1))==n,{limit=n},label={Text("$n 张")})
-                        }}
-                        Text("合成数据一并加载。当前单次最多加载 4 张图片。",style=MaterialTheme.typography.bodySmall,color=Quiet)
+                        Text("作为历史的范围",style=MaterialTheme.typography.titleMedium)
+                        FlowRow(horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                            FilterChip(limit<=0,{limit=0},label={Text("整条记录 · ${selected.validImages} 张")})
+                            FilterChip(limit==PARTIAL_HISTORY,{limit=PARTIAL_HISTORY},label={Text("最近 $PARTIAL_HISTORY 张")})
+                        }
+                        Text("所选记录的全部图片与合成数据都会载入历史；模型每次请求仍只发送最近 4 张画面。",style=MaterialTheme.typography.bodySmall,color=Quiet)
                     }
                 } else {
                     item {

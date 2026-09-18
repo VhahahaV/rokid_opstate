@@ -208,9 +208,13 @@ class StudyJournal(private val context: Context,val database: StudyDatabase) {
         val text="[$type] $trimmedTitle\n$trimmedBody"
         val eventId="manual-${UUID.randomUUID()}"
         database.runInTransaction {
-            append(id,"observations","SYNTHETIC_CONTEXT",StudyWire.payload(
-                "observation_id" to eventId,"kind" to "SYNTHETIC_CONTEXT","asset_id" to null,
+            // Same shape the runtime writes for every observation, so the readers that later rebuild a
+            // service session from this record - LocalCollectionRepository.contextRows among them - find
+            // it. Using a distinct event type here made the note invisible to all of them.
+            append(id,"observations","OBSERVATION_PERSISTED",StudyWire.payload(
+                "observation_id" to eventId,"kind" to "SYNTHETIC_CONTEXT",
                 "occurred_at_epoch_ms" to atEpochMs,"available_at_epoch_ms" to atEpochMs,
+                "content" to text,"asset_id" to null,"episode_handle" to null,"material_revision" to null,
                 "public_text" to text,"source" to "OPERATOR_SYNTHETIC","synthetic_type" to type,
                 "title" to trimmedTitle,"body" to trimmedBody,
                 "added_after_session_end" to (session.endedAtEpochMs!=null)),atEpochMs)

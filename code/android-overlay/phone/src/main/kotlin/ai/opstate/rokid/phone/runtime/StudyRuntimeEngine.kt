@@ -212,7 +212,7 @@ class StudyRuntimeEngine(
         require(event.setup.participantAlias.isNotBlank() && event.setup.participantAlias.length<=80)
         require(event.setup.captureIntervalMs in 5_000..3_600_000) {"CAPTURE_INTERVAL_INVALID"}
         require(event.setup.syncBatchSize in 1..500) {"SYNC_BATCH_SIZE_INVALID"}
-        require(event.setup.collectionHistoryImageLimit in 1..4) {"COLLECTION_HISTORY_LIMIT_INVALID"}
+        require(event.setup.collectionHistoryImageLimit in 0..LocalCollectionRepository.MAX_HISTORY_IMAGES) {"COLLECTION_HISTORY_LIMIT_INVALID"}
         require(event.setup.historyAnchorIndex==null || event.setup.collectionHistorySessionId==null) {"MULTIPLE_HISTORY_SOURCES"}
         val token=++generation
         startingReply=event.reply
