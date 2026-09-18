@@ -9,5 +9,7 @@
         <!-- The panel's own emitter hue: it is the only colour that reaches the eye, so the framework's
              accent is matched to it rather than to the brand mint. -->
         <item name="android:colorAccent">#4CFF97</item>
+        <item name="android:windowSplashScreenBackground">#000000</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@null</item>
     </style>
 </resources>
