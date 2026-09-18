@@ -16,7 +16,7 @@ for definition in SCHEMAS.values():
     if '$id' in definition: REGISTRY=REGISTRY.with_resource(definition['$id'],Resource.from_contents(definition))
 def schema(name): return Draft202012Validator(SCHEMAS[name],registry=REGISTRY)
 
-STREAMS=('observations','sensor_windows','context_events','episodes','captures','anchors','inference_requests',
+STREAMS=('observations','sensor_windows','context_events','episodes','captures','packets','anchors','inference_requests',
          'raw_responses','decisions','deliveries','receipts','user_feedback','runtime_events')
 
 
