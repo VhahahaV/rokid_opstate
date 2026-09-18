@@ -39,6 +39,7 @@ import kotlinx.serialization.json.*
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.URI
+import java.util.UUID
 
 class MainActivity : ComponentActivity() {
     private val scope=MainScope()
@@ -117,6 +118,7 @@ class MainActivity : ComponentActivity() {
                     export={exportSession(selected!!.session.sessionId)},delete={deleteSession(selected!!.session.sessionId)},
                     addContext={type,title,body,at->addRecordContext(selected!!.session.sessionId,type,title,body,at)},
                     importContext={importRecordContext(selected!!.session.sessionId)},
+                    replayCard={anchor->replayServiceCard(selected!!.session.sessionId,anchor)},
                     refresh={openSession(selected.session.sessionId)},dismissMessage={viewState.update {it.copy(message=null)}},logs={openLogs(selected.session.sessionId)})
                 } else screenState.SaveableStateProvider("operator") { OperatorScreen(state,OperatorActions(
                 scan={ scan() },reconnect={ operate { val device=graph.link.savedDevice() ?: error("NO_SAVED_DEVICE")
@@ -205,6 +207,29 @@ class MainActivity : ComponentActivity() {
     private fun openSession(id: String)=operate {
         val loaded=withContext(Dispatchers.IO) {SessionReviewRepository(graph.journal).load(id)}
         viewState.update {it.copy(selectedSession=loaded,selectedTrial=null,busy=false)}
+    }
+    /**
+     * Sends a recorded service card back to the glasses, for demonstrating a session that has already
+     * run. It is a replay and not a delivery: the card carries its own decision id, so it cannot be
+     * confused with the original service or produce a receipt against it, and nothing is journalled as
+     * a new delivery.
+     */
+    private fun replayServiceCard(sessionId: String,anchorId: String)=operate {
+        check(graph.transport.ready.value) { "CONNECT_GLASSES_FIRST" }
+        val decision=withContext(Dispatchers.IO) {
+            graph.journal.dao.eventForAnchor(sessionId,"decisions",anchorId)?.canonicalJson
+                ?.let {StudyWire.json.parseToJsonElement(it).jsonObject}
+        } ?: error("DECISION_NOT_FOUND")
+        check(decision["decision"]?.jsonPrimitive?.contentOrNull=="SERVICE") { "DECISION_NOT_A_SERVICE" }
+        val decisionId=decision["decision_id"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val title=decision["title"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val body=decision["body"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        check(title.isNotBlank() && body.isNotBlank()) { "DECISION_INCOMPLETE" }
+        val payload=StudyWire.payload("decision_id" to "replay-$decisionId",
+            "service_mode" to (decision["service_mode"]?.jsonPrimitive?.contentOrNull ?: "AWARENESS"),
+            "title" to title,"body" to body,"visible_for_ms" to 10_000)
+        withContext(Dispatchers.IO) {graph.transport.replayServiceCard(payload).getOrThrow()}
+        message("已回放到眼镜")
     }
     private fun addRecordContext(id: String,type: String,title: String,body: String,at: Long)=operate {
         withContext(Dispatchers.IO) {graph.journal.addSyntheticContext(id,type,title,body,at)}

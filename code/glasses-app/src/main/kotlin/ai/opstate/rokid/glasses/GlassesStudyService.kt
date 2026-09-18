@@ -32,6 +32,9 @@ private const val ACTIVE_TICK_MS=250L
 /** Periodic refresh of an unchanged buffer status; every real change is sent immediately. */
 private const val STATUS_REFRESH_MS=5_000L
 
+/** Card commands: the ones that need a page that is actually showing. */
+private val CARD_TYPES=setOf("SHOW_CONTEXT_CARD","SHOW_SERVICE_CARD","SHOW_SESSION_STATUS","REPLAY_SERVICE_CARD")
+
 /** One actor owns commands/session/cards. Capture and transfer run as correlated child jobs. */
 class GlassesStudyService : Service() {
     companion object { const val EXTRA_FROM_BOOT="from_boot" }
@@ -81,6 +84,7 @@ class GlassesStudyService : Service() {
     private var pendingTrigger=setOf<String>()
     private var lastBufferStatus=0L
     private var lastStatusSignature=""
+    private var heldCard: StudyMessage?=null
     private var cameraTypeActive=false
     private var cameraWarmUpStarted=false
     private var bufferError: String?=null
@@ -93,6 +97,7 @@ class GlassesStudyService : Service() {
         data class Visible(val value: VisibleEvent): Event()
         data class Dismiss(val id: String): Event()
         data object Tick: Event()
+        data object PageVisible: Event()
     }
     override fun onCreate() {
         super.onCreate()
@@ -108,6 +113,7 @@ class GlassesStudyService : Service() {
             catch(error: Exception) { graph.mutableUi.update { it.copy(setupError="CXR 初始化失败：${error.javaClass.simpleName}") } }
             graph.link.messages.collect { inbox.send(Event.Message(it)) }
         }
+        scope.launch { graph.displayVisible.collect { if(it) inbox.send(Event.PageVisible) } }
         scope.launch { graph.visibleEvents.receiveAsFlow().collect { inbox.send(Event.Visible(it)) } }
         scope.launch { graph.dismissEvents.receiveAsFlow().collect { inbox.send(Event.Dismiss(it)) } }
         scope.launch {
@@ -123,6 +129,7 @@ class GlassesStudyService : Service() {
                     is Event.Visible -> visible(event.value)
                     is Event.Dismiss -> dismiss(event.id,"DISMISS")
                     Event.Tick -> tick()
+                    Event.PageVisible -> flushHeldCard()
                 }
             } catch(cancelled: CancellationException) { throw cancelled }
             catch(error: Exception) { android.util.Log.e("OPSTATE","GLASSES_EVENT_${error.javaClass.simpleName}") }
@@ -167,7 +174,11 @@ class GlassesStudyService : Service() {
         if(request!=null && (type=="ERROR" || request.type in setOf("SESSION_START","SESSION_STOP","SESSION_RESET","SESSION_PAUSE","CAPTURE_REQUEST"))) commandReplies.remember(request,reply)
         graph.link.send(StudyWire.encode(reply)).getOrThrow()
     }
-    private fun displayReady()=graph.displayVisible.value && getSystemService(PowerManager::class.java).isInteractive
+    /**
+     * Whether the page can show a card. A sleeping panel still counts: drawing a card wakes it, so the
+     * only state that cannot display is a page that is not showing at all.
+     */
+    private fun displayReady()=graph.displayVisible.value
     private suspend fun ready(request: StudyMessage) = send("READY",StudyWire.payload(
         "reply_to" to request.message_id,"glasses_time_ms" to System.currentTimeMillis(),
         "camera_ready" to graph.ui.value.cameraReady,"display_ready" to displayReady(),
@@ -194,7 +205,9 @@ class GlassesStudyService : Service() {
         }
         if(!clockReady) { send("ERROR",StudyWire.payload("code" to "CLOCK_SYNC_REQUIRED"),message); return }
         if(message.type in setOf("SESSION_STOP","SESSION_RESET")) commandReplies.replay(message)?.let {graph.link.send(StudyWire.encode(it));return}
-        val admission=gate.admit(message,phoneNow())
+        // A replayed card belongs to no session: it demonstrates a recorded service, so it is exempt
+        // from session admission and never produces a receipt.
+        val admission=if(message.type=="REPLAY_SERVICE_CARD") SessionCommandGate.Admission.ACCEPT else gate.admit(message,phoneNow())
         if(admission==SessionCommandGate.Admission.DUPLICATE) {
             commandReplies.replay(message)?.let {graph.link.send(StudyWire.encode(it));return}
             if(message.type=="SHOW_SERVICE_CARD") {
@@ -208,7 +221,13 @@ class GlassesStudyService : Service() {
         if(paused && message.type in setOf("CAPTURE_REQUEST","IMAGE_GET_BLUETOOTH","SHOW_CONTEXT_CARD","SHOW_SERVICE_CARD","SHOW_SESSION_STATUS")) {
             send("ERROR",StudyWire.payload("code" to "SESSION_PAUSED"),message);return
         }
-        if(message.type in setOf("SHOW_CONTEXT_CARD","SHOW_SERVICE_CARD","SHOW_SESSION_STATUS") && !displayReady()) {
+        // A card needs a page that is actually showing, and a sleeping panel leaves the page paused with
+        // no window focus - so bring it up and hold the card until it is, rather than refusing a service
+        // the wearer never got the chance to see. A page that is hidden for any other reason still fails.
+        if(message.type in CARD_TYPES && !graph.displayVisible.value) {
+            if(!getSystemService(PowerManager::class.java).isInteractive && heldCard==null) {
+                heldCard=message;presentPage();return
+            }
             send("ERROR",StudyWire.payload("code" to "DISPLAY_NOT_READY"),message);return
         }
         when(message.type) {
@@ -302,6 +321,11 @@ class GlassesStudyService : Service() {
                 if(serviceCard!=null) { send("ERROR",StudyWire.payload("code" to "DISPLAY_BUSY"),message); return }
                 serviceCard=card(message,"SERVICE"); updateCard()
             }
+            // Shown exactly like a service so a demo reads the same, but it is a replay, not a delivery.
+            "REPLAY_SERVICE_CARD" -> {
+                if(serviceCard!=null) { send("ERROR",StudyWire.payload("code" to "DISPLAY_BUSY"),message); return }
+                serviceCard=card(message,"REPLAY"); updateCard()
+            }
             "CLEAR_CONTEXT_CARD" -> { contextCard=null; updateCard() }
             "CLEAR_SERVICE_CARD" -> { serviceCard=null; updateCard() }
             "CLEAR_DISPLAY", "CLEAR_ALL", "EMERGENCY_CLEAR" -> clearCards()
@@ -319,7 +343,32 @@ class GlassesStudyService : Service() {
         return GlassesCard((p[if(kind=="SERVICE") "decision_id" else "event_id"] ?: JsonPrimitive(message.message_id)).jsonPrimitive.content,
             message.session_epoch,kind,p["service_mode"]?.jsonPrimitive?.content.orEmpty(),title,body,SystemClock.elapsedRealtime()+minOf(ttl,duration))
     }
-    private fun updateCard() { graph.mutableUi.update { it.copy(card=serviceCard ?: statusCard ?: contextCard) } }
+    private fun updateCard() {
+        graph.mutableUi.update { it.copy(card=serviceCard ?: statusCard ?: contextCard) }
+        if(graph.mutableUi.value.card!=null) presentPage()
+    }
+    /**
+     * Brings the page forward so a card can actually be seen.
+     *
+     * While the glasses are being worn but not looked at, the panel sleeps and the activity is paused;
+     * a window flag cannot light a stopped page, so a card sent then would never be drawn and its
+     * two-frame ACK could never be produced. The service holds a camera foreground service, which lets
+     * it start its own activity, and the activity's KEEP_SCREEN_ON flag keeps the panel lit afterwards.
+     */
+    private fun presentPage() {
+        if(getSystemService(PowerManager::class.java).isInteractive) return
+        runCatching {
+            startActivity(Intent(this,MainActivity::class.java).addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+        }.onFailure { android.util.Log.w("OPSTATE","CARD_PRESENT_${it.javaClass.simpleName}") }
+    }
+    /** Delivers a card that was held while the page was being brought up. */
+    private suspend fun flushHeldCard() {
+        val held=heldCard ?: return
+        heldCard=null
+        if(!graph.displayVisible.value) return
+        handle(held)
+    }
     private fun clearCards() { serviceCard=null; contextCard=null; statusCard=null; updateCard() }
     private suspend fun visible(event: VisibleEvent) {
         statusCard?.takeIf {it.id==event.decisionId && event.epoch==activeEpoch && event.frames>=2 && SystemClock.elapsedRealtime()<it.expiresElapsedMs}?.let {

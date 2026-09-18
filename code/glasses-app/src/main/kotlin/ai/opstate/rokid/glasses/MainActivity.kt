@@ -62,6 +62,9 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.BLACK); setPadding(28,20,28,20)
         }
         setContentView(content)
+        // Reaching here from a card means the panel was asleep; these let the page turn it back on
+        // rather than waiting for the wearer to touch the glasses.
+        if(Build.VERSION.SDK_INT>=27) { setTurnScreenOn(true);setShowWhenLocked(true) }
         content.setOnClickListener { primaryAction() }
         scope.launch { graph.ui.collect { render(it) } }
         startStudy()
@@ -98,12 +101,18 @@ class MainActivity : Activity() {
         lastState=state
         if(state.card!=null && displayed==state.card && previous?.sessionId==state.sessionId && previous?.running==true && state.running) return
         visible?.close(); visible=null
-        content.removeAllViews(); displayed=state.card; passiveStatus=false
+        content.removeAllViews(); displayed=state.card
+        // Cards are the only view that holds the panel; anything else renders and lets it sleep.
+        passiveStatus=state.card==null
         val card=state.card
         if(card!=null) {
             wakeForCard()
+            // A service is the payoff of the whole system, so it is the one card worth an accent and a
+            // mode label; everything else stays quiet so a service is unmistakable at a glance.
+            if(card.kind=="SERVICE") accentBar()
             text(when(card.kind) {"SERVICE"->"OPSTATE  /  主动服务";"STATUS"->"OPSTATE  /  会话状态";else->"OPSTATE  /  情境更新"},15f,Color.rgb(136,255,227),1)
-            text(card.title,26f,Color.WHITE,2,bold=true)
+            text(card.title,27f,Color.WHITE,3,bold=true)
+            if(card.kind=="SERVICE") text(serviceModeLabel(card.mode),14f,Color.rgb(136,255,227),1)
             text(card.body,22f,Color.WHITE,9)
             text("单击收起 · 双击返回桌面",13f,Color.GRAY,2)
             if(card.kind in setOf("SERVICE","STATUS")) visible=VisibleDrawAcknowledger(content,{ displayed?.id==card.id && graph.ui.value.card?.id==card.id }) { frames ->
@@ -118,12 +127,12 @@ class MainActivity : Activity() {
         } else if(state.sessionId==null) {
             text("OPSTATE",15f,Color.rgb(136,255,227),1)
             text(if(state.phoneConnected) "手机已连接" else "连接你的手机",26f,Color.WHITE,2,bold=true)
-            text(state.setupError ?: when {state.phoneConnected->"在手机点击「开始采集」";!state.cameraReady->"相机准备中…";else->"轻触侧边，选择或配对手机"},18f,Color.LTGRAY,3)
-            if(state.bufferedPhotos>0) text("眼镜还有 ${state.bufferedPhotos} 张照片\n开始采集后恢复同步",15f,Color.GRAY,3)
-            else if(state.phoneConnected) text("照片先存眼镜，再分批同步手机",15f,Color.GRAY,2)
+            text(state.setupError ?: when {state.phoneConnected->"在手机上选择模式并开始";!state.cameraReady->"相机准备中…";else->"轻触侧边，选择或配对手机"},18f,Color.LTGRAY,3)
+            if(state.bufferedPhotos>0) text("眼镜还有 ${state.bufferedPhotos} 张照片\n开始会话后恢复同步",15f,Color.GRAY,3)
+            else if(state.phoneConnected) text("照片先存眼镜，按手机设置分批同步",15f,Color.GRAY,2)
             text("双击返回桌面",13f,Color.GRAY,1)
         } else if(!state.phoneConnected) {
-            text("OPSTATE · 采集",15f,Color.rgb(136,255,227),1)
+            text("OPSTATE",15f,Color.rgb(136,255,227),1)
             text(if(state.collectingLocally) "正在本地采集" else "手机连接已中断",24f,Color.WHITE,2,bold=true)
             text("眼镜待同步 ${state.bufferedPhotos} 张\n轻触侧边查找手机",18f,Color.LTGRAY,3)
         } else if(state.demoStatus!=null) {
@@ -170,9 +179,10 @@ class MainActivity : Activity() {
     }
     private fun updateDisplayPolicy() {
         val showing=content.childCount>0
-        // A card holds the panel lit because its visible ACK needs the screen to stay interactive; the
-        // passive collection status does not, so the system timeout is allowed to blank it.
-        if(showing && !passiveStatus) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // Only a card earns a lit panel: its visible ACK needs the screen interactive. Every other view -
+        // connection state, collection status, sensor notices - waits for a tap instead of burning the
+        // whole panel, which on these glasses lights every pixel whether or not anything is drawn on it.
+        if(showing && !passiveStatus && displayed!=null) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         window.attributes=window.attributes.apply {
             screenBrightness=if(showing) WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE else 0f
@@ -189,8 +199,21 @@ class MainActivity : Activity() {
             finishAndRemoveTask()
         }
     }
+    /** The one piece of colour meant to catch the eye: a service is not a status line. */
+    private fun accentBar() {
+        content.addView(View(this).apply {
+            setBackgroundColor(Color.rgb(136,255,227))
+            layoutParams=LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,(2.5f*density).toInt())
+        })
+    }
+    private fun serviceModeLabel(mode: String)=when(mode) {
+        "AWARENESS"->"提醒";"DECISION"->"建议";"PREPARATION"->"准备";"EXECUTION"->"执行";else->"服务"
+    }
+    private val density get()=resources.displayMetrics.density
     private fun text(value: String,size: Float,color: Int,lines: Int=10,bold: Boolean=false) { content.addView(TextView(this).apply {
         text=value; textSize=size; setTextColor(color); setPadding(0,8,0,10);maxLines=lines;ellipsize=TextUtils.TruncateAt.END
+        // Wearing distance: a little extra leading keeps a wrapped service body readable.
+        setLineSpacing(0f,1.18f)
         if(bold) typeface=Typeface.DEFAULT_BOLD
     }) }
     override fun onKeyUp(keyCode: Int,event: KeyEvent): Boolean {

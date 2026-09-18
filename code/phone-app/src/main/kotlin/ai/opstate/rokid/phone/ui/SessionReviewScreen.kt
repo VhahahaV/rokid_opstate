@@ -37,7 +37,7 @@ import java.util.Locale
 
 @Composable fun SessionReviewScreen(review: SessionReview,trial: TrialReview?,busy: Boolean,message: String?,
     back: ()->Unit,openTrial: (TrialSummary)->Unit,export: ()->Unit,delete: ()->Unit,refresh: ()->Unit,dismissMessage: ()->Unit,logs: ()->Unit,
-    addContext: (String,String,String,Long)->Unit={_,_,_,_->},importContext: ()->Unit={}) {
+    addContext: (String,String,String,Long)->Unit={_,_,_,_->},importContext: ()->Unit={},replayCard: (String)->Unit={}) {
     val overviewScroll=rememberLazyListState()
     val trialScroll=key(trial?.summary?.anchorId) { rememberLazyListState() }
     var filter by rememberSaveable(review.session.sessionId) { mutableStateOf("全部") }
@@ -163,6 +163,7 @@ import java.util.Locale
                                 }
                                 Text(row.title ?: row.anchorId.substringAfterLast('.').replace('-',' '),style=MaterialTheme.typography.titleMedium,maxLines=2,overflow=TextOverflow.Ellipsis)
                                 Text("${row.episode} · ${row.evidenceCount} 条证据 · ${row.latencyMs?.let {"$it ms"} ?: "未返回"}",style=MaterialTheme.typography.bodySmall,color=Quiet)
+                                if(row.decision=="SERVICE" && row.title!=null) TextButton(onClick={replayCard(row.anchorId)},enabled=!busy,contentPadding=PaddingValues(0.dp)) {Text("回放到眼镜")}
                             }
                             Icon(Icons.Default.ArrowForward,"查看试次",Modifier.size(18.dp),tint=Quiet)
                         }

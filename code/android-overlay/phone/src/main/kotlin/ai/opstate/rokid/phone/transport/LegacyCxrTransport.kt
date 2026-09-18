@@ -5,6 +5,7 @@ import ai.opstate.rokid.phone.rokid.CxrDevice
 import ai.opstate.rokid.phone.rokid.CxrLinkPort
 import android.os.SystemClock
 import java.util.Base64
+import java.util.UUID
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
@@ -243,6 +244,14 @@ class LegacyCxrTransport(
         sessionConnectionGeneration=connection
         sessionExpected=true
     }
+    /**
+     * Sends a card that belongs to no session, for demonstrating a recorded service. Deliberately not
+     * routed through [command]: that guards against delivering into a stale session, and a replay has no
+     * session at all - the glasses renders it without ever producing a receipt.
+     */
+    suspend fun replayServiceCard(payload: JsonObject): Result<Unit> =
+        link.send(StudyWire.encode(controlMessage("REPLAY_SERVICE_CARD",payload,10_000)
+            .copy(idempotency_key="replay-${UUID.randomUUID()}")))
     override suspend fun command(message: StudyMessage): Result<Unit> {
         if(message.type=="CONFIGURE_CAPTURE") bufferedEnabled=true
         if(message.type in setOf("CAPTURE_REQUEST","IMAGE_GET_BLUETOOTH","SHOW_CONTEXT_CARD","SHOW_SERVICE_CARD","SHOW_SESSION_STATUS") &&
