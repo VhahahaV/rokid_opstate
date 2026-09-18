@@ -114,6 +114,8 @@ class StudyRuntimeEngine(
         var serviceVisible=false;var visibleDecisionId: String?=null;var paused=false;var resumeOnReconnect=false;var phoneInteractionAt=0L
         var observationCount=0;var packetCount=0
         val historicalImages=linkedMapOf<String,ByteArray>()
+        /** Notes imported as this session's history; every request carries them see the store's pinnedIds. */
+        val historyContextIds=linkedSetOf<String>()
         var historyReady=seed!=null || collectionSeed!=null;var automaticCapture=true;var demoMode=setup.glassesDemoMode;var lastDemoStatus: String?=null
         var pendingContextCard: JsonObject?=null
         var stopping=false
@@ -351,6 +353,7 @@ class StudyRuntimeEngine(
         session.collectionSeed?.let {seed->
             for(record in seed.contexts) {
                 session.history.append(record)
+                session.historyContextIds+=record.observationId
                 appendObservation(session,record,StudyWire.payload("source" to "LOCAL_COLLECTION_HISTORY","source_session_id" to seed.summary.sessionId))
             }
             for((index,image) in seed.images.withIndex()) {
@@ -958,7 +961,7 @@ class StudyRuntimeEngine(
             session.packetEpisodes[episode.episodeHandle]=episode
             val evaluation=PacketEvaluation(packet.packetId,packet.cutoffEpochMs,packet.newEventIds.lastOrNull() ?: "heartbeat",
                 packet.imageIds.last(),packet.triggerTypes)
-            val retrieved=(session.history.historyRetrievalSnapshot(packet.cutoffEpochMs,packet.newEventIds) +
+            val retrieved=(session.history.historyRetrievalSnapshot(packet.cutoffEpochMs,packet.newEventIds,pinnedIds=session.historyContextIds) +
                 session.history.causalSnapshot(packet.cutoffEpochMs).filter {it.assetId==packet.imageIds.last()})
                 .distinctBy {it.observationId}.sortedBy {it.availableAtEpochMs}
             journal.append(session.id,"runtime_events","HISTORY_RETRIEVAL",StudyWire.payload("packet_id" to packet.packetId,

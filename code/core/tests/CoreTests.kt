@@ -267,6 +267,24 @@ fun main() {
         assertTrue(request.receipts.isEmpty(),"future receipt entered the request")
     }
 
+    test("imported history notes reach the request even though nothing else would retrieve them") {
+        // A note imported as this session's history: written hours before the session started, in
+        // another language, and the only text it has. Recency misses it for age, lexical prefetch
+        // misses it because the query terms come from the current observation's boilerplate content.
+        val store=CausalContextStore()
+        val now=10_000_000L
+        val age=7*3_600_000L
+        store.append(ObservationRecord("note-1",ObservationKind.SYNTHETIC_CONTEXT,now-age,now-age,"组会地点已改到 B302。"))
+        store.append(ObservationRecord("img-1",ObservationKind.IMAGE,now-age,now-age,"Collected historical image 1 of 2","asset-1"))
+        store.append(ObservationRecord("live",ObservationKind.IMAGE,now,now,"Current egocentric image observation.","asset-2"))
+
+        val unpinned=store.historyRetrievalSnapshot(now,listOf("live"))
+        assertFalse(unpinned.any {it.observationId=="note-1"},"unpinned note was retrieved after all, so this test proves nothing")
+
+        val pinned=store.historyRetrievalSnapshot(now,listOf("live"),pinnedIds=setOf("note-1"))
+        assertTrue(pinned.any {it.observationId=="note-1"},"pinned history note did not reach the request")
+    }
+
     test("visible ACK at expiry or from before the decision cannot create receipt") {
         val episode=CandidateEpisode("ep","obj","intent",ServiceMode.PREPARATION)
         val decision=ServiceDecision("r","d",DecisionLabel.SERVICE,ServiceMode.PREPARATION,"title","body",emptySet(),100,200)

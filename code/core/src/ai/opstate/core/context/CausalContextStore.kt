@@ -45,7 +45,17 @@ class CausalContextStore {
         .filter { it.availableAtEpochMs <= atEpochMs }
         .mapTo(linkedSetOf()) { it.observationId }
 
-    /** HR working set: exact packet records, one hour of recent context, then a small lexical archive prefetch. */
+    /**
+     * HR working set: the exact packet records, one hour of recent context, a small lexical archive
+     * prefetch, and anything the caller pins.
+     *
+     * [pinnedIds] exists because of imported history. A session seeded from an earlier collection
+     * holds the notes the operator chose as this session's memory, and every other selector here
+     * misses them: they are older than any sane recency window, and the lexical prefetch scores them
+     * against terms drawn from the current observation's boilerplate content, which a note written in
+     * another language can never match. Without pinning, a history-continuation session reaches the
+     * model with historical photographs and no words at all.
+     */
     @Synchronized
     fun historyRetrievalSnapshot(
         atEpochMs: Long,
@@ -54,6 +64,7 @@ class CausalContextStore {
         recentLimit: Int = 128,
         retrievalLimit: Int = 8,
         historicalImageLimit: Int = 4,
+        pinnedIds: Collection<String> = emptySet(),
     ): List<ObservationRecord> {
         val visible=eventsById.values.filter {it.availableAtEpochMs<=atEpochMs}
         val exact=visible.filter {it.observationId in newEventIds}
@@ -64,8 +75,9 @@ class CausalContextStore {
             .map {event->event to query.count {term->event.content.lowercase().contains(term)}}
             .filter {it.second>0}.sortedWith(compareByDescending<Pair<ObservationRecord,Int>> {it.second}
                 .thenByDescending {it.first.availableAtEpochMs}).take(retrievalLimit).map {it.first}.toList()
+        val pinned=if(pinnedIds.isEmpty()) emptyList() else visible.filter {it.observationId in pinnedIds}
         val historicalImages=visible.filter {it.kind==ObservationKind.IMAGE && it.observationId !in newEventIds}.takeLast(historicalImageLimit)
-        return (exact+recent+retrieved+historicalImages).distinctBy {it.observationId}
+        return (exact+recent+retrieved+pinned+historicalImages).distinctBy {it.observationId}
             .sortedWith(compareBy<ObservationRecord> {it.availableAtEpochMs}.thenBy {it.observationId})
     }
 
