@@ -149,7 +149,7 @@ class MainActivity : ComponentActivity() {
                         directModel=viewState.value.directModel.takeIf {options.mode==SessionMode.SERVICE},
                         scenarioAsset="",replayEnabled=false,startLiveAfterHistory=true,glassesCapture=true,syncBatchSize=options.syncBatchSize,
                         initialPositionMs=options.scenarioPositionMs,historyAnchorIndex=options.historyIndex,glassesDemoMode=options.demoMode,
-                        shadowInference=options.shadowInference,mode=options.mode,captureIntervalMs=options.captureIntervalMs,
+                        shadowInference=options.shadowInference,mode=options.mode,captureIntervalMs=options.captureIntervalMs,forceService=options.forceService,
                         collectionHistorySessionId=options.collectionHistorySessionId,collectionHistoryImageLimit=options.collectionHistoryImageLimit))))}},
                 pause={operate {graph.studyRuntime.pauseSession()}},
                 syncPhotos={graph.studyRuntime.syncPhotos()},

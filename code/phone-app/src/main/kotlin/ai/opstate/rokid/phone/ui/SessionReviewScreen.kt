@@ -261,7 +261,8 @@ internal fun deliveryLabel(value: String?)=when(value) {"DISPLAY_VISIBLE"->"已�
 @Composable private fun SyntheticContextDialog(startedAt: Long,endedAt: Long?,onConfirm: (String,String,String,Long)->Unit,onDismiss: ()->Unit) {
     val types=listOf("EMAIL" to "邮件","CALENDAR" to "日程","MESSAGE" to "消息","NOTE" to "备忘")
     var type by remember { mutableStateOf("MESSAGE") }
-    var title by remember { mutableStateOf("") }
+    // No separate title field: the body is what the model reads and what a note is judged on, and a
+    // second short string to invent only got in the way. The type label becomes the note's heading.
     var body by remember { mutableStateOf("") }
     var minutes by remember { mutableStateOf(0L) }
     val span=(((endedAt ?: startedAt)-startedAt)/60000L).coerceAtLeast(1L)
@@ -274,12 +275,11 @@ internal fun deliveryLabel(value: String?)=when(value) {"DISPLAY_VISIBLE"->"已�
                     FilterChip(selected=type==value,onClick={type=value},label={Text(label)})
                 }
             }
-            OutlinedTextField(title,{title=it.take(80)},singleLine=true,label={Text("标题（≤80）")})
-            OutlinedTextField(body,{body=it.take(4000)},label={Text("正文（≤4000）")},minLines=3)
+            OutlinedTextField(body,{body=it.take(4000)},label={Text("正文（≤4000）")},minLines=4)
             Text("插入位置：记录开始后 ${minutes} 分钟（全程约 ${span} 分钟）",style=MaterialTheme.typography.bodySmall,color=Quiet)
             Slider(minutes.toFloat(),{minutes=it.toLong()},valueRange=0f..span.toFloat(),steps=0)
         } },
-        confirmButton={TextButton(onClick={onConfirm(type,title,body,startedAt+minutes*60000L)},enabled=title.isNotBlank()) {Text("插入")}},
+        confirmButton={TextButton(onClick={onConfirm(type,types.first {it.first==type}.second,body,startedAt+minutes*60000L)},enabled=body.isNotBlank()) {Text("插入")}},
         dismissButton={TextButton(onClick=onDismiss) {Text("取消")}},
     )
 }

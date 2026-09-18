@@ -174,9 +174,12 @@ class DirectModelClient(
         })
     }
     companion object {
-        fun create(context: Context,config: DirectModelConfig,key: ()->String): DirectModelClient {
+        /** The prompt a session runs under; the forced-demo variant always asks for a service. */
+        const val PROMPT_STANDARD="prompt.md"
+        const val PROMPT_FORCE_SERVICE="prompt_force.md"
+        fun create(context: Context,config: DirectModelConfig,promptAsset: String=PROMPT_STANDARD,key: ()->String): DirectModelClient {
             fun asset(name: String)=context.assets.open("direct_model/$name").use {it.readBytes()}
-            return DirectModelClient(config,key,asset("prompt.md").toString(Charsets.UTF_8),StudyWire.json.parseToJsonElement(asset("model_output.schema.json").toString(Charsets.UTF_8)).jsonObject,
+            return DirectModelClient(config,key,asset(promptAsset).toString(Charsets.UTF_8),StudyWire.json.parseToJsonElement(asset("model_output.schema.json").toString(Charsets.UTF_8)).jsonObject,
                 StudyWire.sha256(asset("inference_request_v2.schema.json")),StudyWire.sha256(asset("inference_response_v2.schema.json")),
                 ai.opstate.rokid.phone.BuildConfig.DIRECT_MODEL_CODE_SHA256,routeClient=InternetRouting(context)::client,
                 imagePreprocessor=ModelImagePreprocessor::prepare)

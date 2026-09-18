@@ -51,6 +51,8 @@ data class SessionSetup(val participantAlias: String,val endpoint: String,
     val replayParentSessionId: String?=null,val historyAnchorIndex: Int?=null,val glassesDemoMode: Boolean=false,val shadowInference: Boolean=false,
     val mode: SessionMode=SessionMode.SERVICE,val captureIntervalMs: Long=60_000,
     val collectionHistorySessionId: String?=null,val collectionHistoryImageLimit: Int=4,val startLiveAfterHistory: Boolean=false,
+    /** Demo mode: run under the forced-service prompt so every call returns a service to show. */
+    val forceService: Boolean=false,
     val glassesCapture: Boolean=false,val syncBatchSize: Int=60)
 data class RuntimeCandidate(val handle: String,val revision: Long,val mode: String)
 data class RuntimeViewState(val phase: String="IDLE",val sessionId: String?=null,val scenario: String?=null,
@@ -205,7 +207,10 @@ class StudyRuntimeEngine(
     }
     private fun client(setup: SessionSetup): InferenceClient = inferenceOverride?.invoke(setup) ?: setup.directModel?.let {config->
         require(modelKeyProvider(config).isNotBlank()) {"MODEL_API_KEY_REQUIRED"}
-        DirectModelClient.create(context,config) {modelKeyProvider(config)}
+        // A forced session runs under its own prompt, so its decisions carry a different prompt hash in
+        // the frozen contract and can never be mistaken for ordinary ones in an export.
+        val prompt=if(setup.forceService) DirectModelClient.PROMPT_FORCE_SERVICE else DirectModelClient.PROMPT_STANDARD
+        DirectModelClient.create(context,config,prompt) {modelKeyProvider(config)}
     } ?: RemoteHarnessClient(setup.endpoint,tokenProvider,StudyWire.json,routeClient=InternetRouting(context)::client)
     private suspend fun begin(event: Event.Start) {
         check(active==null && preparation?.isActive!=true) {"SESSION_ALREADY_ACTIVE"}
@@ -290,6 +295,7 @@ class StudyRuntimeEngine(
                 "selected_image_count" to it.images.size,
                 "selected_observation_ids" to JsonArray(it.images.map {image->JsonPrimitive(image.sourceObservationId)}))},
             "glasses_demo_mode" to session.demoMode,"shadow_inference" to session.setup.shadowInference,
+            "force_service" to session.setup.forceService,
             "phone_build" to phoneBuild,"glasses_build" to session.peerBuild?.let {StudyWire.json.encodeToJsonElement(it)},
             "glasses_app_version" to session.peerBuild?.appVersion,
             "image_quality_policy" to StudyWire.payload("method" to "rgb-edge-32x24-v2","min_luma" to 18,"max_luma" to 238,"min_edge_energy" to 25,
