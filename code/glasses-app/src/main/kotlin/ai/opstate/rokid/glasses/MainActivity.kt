@@ -102,6 +102,8 @@ class MainActivity : Activity() {
         passiveStatus=state.card==null
         val card=state.card
         if(card!=null) {
+            android.util.Log.i("OPSTATE","CARD_RENDER kind=${card.kind} id=${card.id} "+
+                "interactive=${getSystemService(PowerManager::class.java).isInteractive} focus=${hud.hasWindowFocus()}")
             wakeForCard()
             cardView(card)
             if(card.kind in setOf("SERVICE","STATUS")) visible=VisibleDrawAcknowledger(hud,{ displayed?.id==card.id && graph.ui.value.card?.id==card.id }) { frames ->
@@ -203,7 +205,21 @@ class MainActivity : Activity() {
         // and no amount of redrawing the card could remove it, because the card was never what was
         // lighting up. Brightness here belongs to the wearer's own setting; this page's only light
         // control is its ink.
-        graph.displayVisible.value=showing && hud.hasWindowFocus() && !isFinishing
+        // Deliberately not gated on `showing`. "Can this page be given a card" is a question about the
+        // window, not about what happens to be drawn on it: an active session with no card renders an
+        // intentionally empty black page, and gating on content made that page permanently unable to
+        // accept the card that would have given it content. The service held every card waiting for a
+        // page that would only become ready once a card arrived - measured on the glasses as a held
+        // startup card that never flushed and every later card refused DISPLAY_NOT_READY.
+        publishDisplayVisible(hud.hasWindowFocus() && !isFinishing,"policy focus=${hud.hasWindowFocus()} content=${hud.hasContent}")
+    }
+    private var lastDisplayVisible: Boolean?=null
+    private fun publishDisplayVisible(visible: Boolean,why: String) {
+        if(lastDisplayVisible!=visible) {
+            lastDisplayVisible=visible
+            android.util.Log.i("OPSTATE","DISPLAY_VISIBLE=$visible $why shown=${hud.isShown} windowVis=${hud.windowVisibility}")
+        }
+        graph.displayVisible.value=visible
     }
     private fun backAction() {
         if(choosingPhone) {choosingPhone=false;stopDiscovery();lastState=null;render(graph.ui.value)}
@@ -328,7 +344,7 @@ class MainActivity : Activity() {
     }
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        graph.displayVisible.value=hasFocus && hud.hasContent && !isFinishing
+        publishDisplayVisible(hasFocus && !isFinishing,"focusChanged")
         if(hasFocus) hud.postInvalidateOnAnimation()
     }
     override fun onStop() {graph.displayVisible.value=false;window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);super.onStop()}

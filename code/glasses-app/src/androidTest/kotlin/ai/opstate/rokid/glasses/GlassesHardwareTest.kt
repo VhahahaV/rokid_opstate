@@ -72,13 +72,18 @@ class GlassesHardwareTest {
                 activity.onKeyUp(KeyEvent.KEYCODE_ENTER,KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ENTER))
                 assertEquals(0,activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 assertNeverVeils(activity)
-                assertFalse(app.displayVisible.value)
+                // Collapsing releases the panel, not the page. The page is still up and focused, so it
+                // can still be handed a card - which is the point of holding one for a sleeping panel
+                // rather than refusing it. Gating this on drawn content instead deadlocked the two:
+                // the page stayed "not ready" until a card arrived, and the card was held until the
+                // page was ready.
+                assertTrue(app.displayVisible.value)
             }
             app.mutableUi.value=app.ui.value.copy(bufferedPhotos=3,phoneConnected=false)
             delay(100)
             instrumentation.runOnMainSync {
                 assertEquals(0,activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                assertFalse(app.displayVisible.value)
+                assertTrue(app.displayVisible.value)
                 activity.onKeyUp(KeyEvent.KEYCODE_ENTER,KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ENTER))
                 // Re-expanding shows the collection status again, and that view stays passive: only a
                 // card holds the panel lit, because only a card needs an interactive screen for the

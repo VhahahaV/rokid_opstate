@@ -205,6 +205,19 @@ class GlassesStudyService : Service() {
         }
         if(!clockReady) { send("ERROR",StudyWire.payload("code" to "CLOCK_SYNC_REQUIRED"),message); return }
         if(message.type in setOf("SESSION_STOP","SESSION_RESET")) commandReplies.replay(message)?.let {graph.link.send(StudyWire.encode(it));return}
+        // A card that cannot be shown yet must not spend its idempotency key here.
+        //
+        // Admitting first and holding afterwards meant a held card was admitted on arrival and then
+        // re-admitted when the page came up, which came back DUPLICATE and dropped it - so the card
+        // that was held precisely so the wearer could see it was the one card that never drew.
+        // Measured on the glasses: the startup card woke the panel, the page became visible, and the
+        // card was still never shown. Decide first, admit once, when it is actually handled.
+        if(message.type in CARD_TYPES && !graph.displayVisible.value) {
+            if(!getSystemService(PowerManager::class.java).isInteractive && heldCard==null) {
+                heldCard=message;presentPage();return
+            }
+            send("ERROR",StudyWire.payload("code" to "DISPLAY_NOT_READY"),message);return
+        }
         // A replayed card belongs to no session: it demonstrates a recorded service, so it is exempt
         // from session admission and never produces a receipt.
         val admission=if(message.type=="REPLAY_SERVICE_CARD") SessionCommandGate.Admission.ACCEPT else gate.admit(message,phoneNow())
@@ -220,15 +233,6 @@ class GlassesStudyService : Service() {
         }
         if(paused && message.type in setOf("CAPTURE_REQUEST","IMAGE_GET_BLUETOOTH","SHOW_CONTEXT_CARD","SHOW_SERVICE_CARD","SHOW_SESSION_STATUS")) {
             send("ERROR",StudyWire.payload("code" to "SESSION_PAUSED"),message);return
-        }
-        // A card needs a page that is actually showing, and a sleeping panel leaves the page paused with
-        // no window focus - so bring it up and hold the card until it is, rather than refusing a service
-        // the wearer never got the chance to see. A page that is hidden for any other reason still fails.
-        if(message.type in CARD_TYPES && !graph.displayVisible.value) {
-            if(!getSystemService(PowerManager::class.java).isInteractive && heldCard==null) {
-                heldCard=message;presentPage();return
-            }
-            send("ERROR",StudyWire.payload("code" to "DISPLAY_NOT_READY"),message);return
         }
         when(message.type) {
             "CONFIGURE_CAPTURE" -> {
@@ -345,6 +349,7 @@ class GlassesStudyService : Service() {
     }
     private fun updateCard() {
         graph.mutableUi.update { it.copy(card=serviceCard ?: statusCard ?: contextCard) }
+        android.util.Log.i("OPSTATE","CARD_UI kind=${graph.mutableUi.value.card?.kind ?: "none"} id=${graph.mutableUi.value.card?.id ?: "none"}")
         if(graph.mutableUi.value.card!=null) presentPage()
     }
     /**
@@ -355,8 +360,20 @@ class GlassesStudyService : Service() {
      * two-frame ACK could never be produced. The service holds a camera foreground service, which lets
      * it start its own activity, and the activity's KEEP_SCREEN_ON flag keeps the panel lit afterwards.
      */
+    @Suppress("DEPRECATION")
     private fun presentPage() {
-        if(getSystemService(PowerManager::class.java).isInteractive) return
+        val power=getSystemService(PowerManager::class.java)
+        if(power.isInteractive) return
+        // Starting the activity is not enough to light the panel. When this page is already the
+        // resumed activity - which it is whenever the panel merely slept - the start arrives as
+        // onNewIntent, the activity's turnScreenOn never fires, and the display stays off. Then the
+        // page can never report itself visible, so a held card is never flushed and every later card
+        // is refused DISPLAY_NOT_READY. Measured on the glasses: a held startup card sat unflushed
+        // while the panel stayed asleep. The wake lock is what actually lights it.
+        runCatching {
+            power.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                "OPSTATE:present").acquire(3_000)
+        }.onFailure { android.util.Log.w("OPSTATE","PAGE_WAKE_FAILED ${it.javaClass.simpleName}") }
         runCatching {
             startActivity(Intent(this,MainActivity::class.java).addFlags(
                 Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP))

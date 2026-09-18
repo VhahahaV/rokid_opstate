@@ -17,7 +17,18 @@ class VisibleDrawAcknowledger(
     private var scheduled=false
     private val power=view.context.getSystemService(Context.POWER_SERVICE) as PowerManager
     private fun visible()=view.isShown && view.hasWindowFocus() && view.windowVisibility==View.VISIBLE && power.isInteractive && stillCurrent()
+    /** Why a draw pass could not be counted, so a card that never acknowledges says what stopped it. */
+    private fun blockedBy()=buildList {
+        if(!view.isShown) add("notShown")
+        if(!view.hasWindowFocus()) add("noWindowFocus")
+        if(view.windowVisibility!=View.VISIBLE) add("windowNotVisible")
+        if(!power.isInteractive) add("panelAsleep")
+        if(!stillCurrent()) add("cardReplaced")
+    }.joinToString("+")
+    private var lastState: String?=null
     private val listener=ViewTreeObserver.OnDrawListener {
+        val state=if(closed||scheduled) null else if(visible()) "countable" else blockedBy()
+        if(state!=lastState) { lastState=state;android.util.Log.i("OPSTATE","ACK_DRAW state=${state ?: "settled"} count=$count") }
         if(!closed && !scheduled && visible()) {
             count++
             if(count>=2) {
