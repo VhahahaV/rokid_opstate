@@ -6,8 +6,10 @@ import androidx.compose.ui.res.painterResource
 import ai.opstate.rokid.phone.app.R
 import ai.opstate.rokid.phone.replay.ReplayState
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -79,6 +81,9 @@ data class OperatorActions(
     val openLogs: (String)->Unit,
     val loadHistory: (String?,Int?,Int,()->Unit)->Unit,val clearHistory: ()->Unit,
     val syncPhotos: ()->Unit={},
+    val renameSession: (String,String)->Unit={_,_->},
+    val deleteSessions: (List<String>)->Unit={},
+    val mergeSessions: (List<String>,String)->Unit={_,_->},
 )
 
 @Composable fun OperatorScreen(state: OperatorViewState,actions: OperatorActions) {
@@ -88,9 +93,16 @@ data class OperatorActions(
     var setup by rememberSaveable { mutableStateOf(false) }
     var contextForm by rememberSaveable {mutableStateOf(false)}
     var advanced by rememberSaveable {mutableStateOf(false)}
+    // Record management. Selection is transient: any exit from the tab clears it.
+    var selection by remember { mutableStateOf(emptySet<String>()) }
+    var renameTarget by remember { mutableStateOf<StudySessionEntity?>(null) }
+    var deleteTargets by remember { mutableStateOf<List<String>>(emptyList()) }
+    var mergeOpen by remember { mutableStateOf(false) }
     val screenScope=rememberCoroutineScope()
     val openCredentials: ()->Unit={connection=false;tab=3;screenScope.launch {pageScrollStates[3].scrollToItem(1)}}
-    BackHandler(enabled=connection || tab!=0) { if(connection) connection=false else tab=0 }
+    BackHandler(enabled=connection || tab!=0 || selection.isNotEmpty()) {
+        when { connection -> connection=false; selection.isNotEmpty() -> selection=emptySet(); else -> tab=0 }
+    }
     val snackbar=remember { SnackbarHostState() }
     LaunchedEffect(state.message) {
         state.message?.let { snackbar.showSnackbar(it); actions.dismissMessage() }
@@ -110,14 +122,25 @@ data class OperatorActions(
             Text(if(connection) "连接眼镜" else listOf("开始","我的记录","历史","设置")[tab],style=MaterialTheme.typography.headlineLarge)
             if(state.busy) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top=12.dp))
         } },
-        bottomBar={ NavigationBar(containerColor=Color(0xFFFCFDF9),tonalElevation=0.dp) {
+        bottomBar={ Column {
+          if(selection.isNotEmpty()) Surface(color=Color(0xFFF1F4EF),tonalElevation=0.dp) {
+            Row(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=10.dp),horizontalArrangement=Arrangement.spacedBy(8.dp),verticalAlignment=Alignment.CenterVertically) {
+                Text("${selection.size} 条",style=MaterialTheme.typography.labelLarge,color=Quiet)
+                Spacer(Modifier.weight(1f))
+                if(selection.size==1) TextButton(onClick={renameTarget=state.sessions.firstOrNull {it.sessionId in selection}}) {Text("重命名")}
+                TextButton(onClick={mergeOpen=true},enabled=selection.size>=2) {Text("合并")}
+                TextButton(onClick={deleteTargets=selection.toList()}) {Text("删除",color=MaterialTheme.colorScheme.error)}
+                TextButton(onClick={selection=emptySet()}) {Text("取消")}
+            }
+          }
+          NavigationBar(containerColor=Color(0xFFFCFDF9),tonalElevation=0.dp) {
             listOf(0 to ("开始" to Icons.Default.Home),1 to ("记录" to Icons.Default.List),3 to ("设置" to Icons.Default.Settings)).forEach { (index,pair) ->
                 val (label,icon)=pair
                 NavigationBarItem(selected=tab==index && !connection,onClick={tab=index;connection=false},
                     icon={Icon(icon,label,Modifier.size(21.dp))},label={Text(label)},
                     colors=NavigationBarItemDefaults.colors(selectedIconColor=Ink,selectedTextColor=Ink,indicatorColor=Color(0xFFE0EBDF),unselectedIconColor=Quiet,unselectedTextColor=Quiet))
             }
-        } },
+        } } },
     ) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding).testTag("operator-content-$tab"),state=pageScrollStates[if(connection) 4 else tab],contentPadding=PaddingValues(start=24.dp,end=24.dp,bottom=28.dp),verticalArrangement=Arrangement.spacedBy(20.dp)) {
             if(connection) {
@@ -184,7 +207,18 @@ data class OperatorActions(
                         Text("戴上眼镜，记录第一段生活。",style=MaterialTheme.typography.bodyMedium,color=Quiet)
                         PrimaryButton("去采集",true) {tab=0}
                         Spacer(Modifier.height(8.dp))
-                    } } else items(state.sessions,key={it.sessionId}) { session -> SessionRow(session) {actions.openSession(session)} }
+                    } } else {
+                        if(selection.isNotEmpty()) item { Text("已选 ${selection.size} 条 · 长按可多选，点「取消」退出",style=MaterialTheme.typography.bodySmall,color=Quiet) }
+                        items(state.sessions,key={it.sessionId}) { session ->
+                            val selected=session.sessionId in selection
+                            SessionRow(session,selected,selection.isNotEmpty(),
+                                onClick={
+                                    if(selection.isEmpty()) actions.openSession(session)
+                                    else selection=if(selected) selection-session.sessionId else selection+session.sessionId
+                                },
+                                onLongClick={selection=selection+session.sessionId})
+                        }
+                    }
                 }
                 3 -> {
                     item {Panel {
@@ -211,6 +245,42 @@ data class OperatorActions(
     }
     if(setup) HistoryImportSheet(state,actions) {setup=false}
     if(contextForm && state.runtime.sessionId!=null) SyntheticContextSheet(state,actions) {contextForm=false}
+    renameTarget?.let { target ->
+        RecordNameDialog(title="重命名记录",initial=target.participantAlias,confirmLabel="保存",
+            onConfirm={ name -> actions.renameSession(target.sessionId,name);renameTarget=null;selection=emptySet() },
+            onDismiss={renameTarget=null})
+    }
+    if(mergeOpen) {
+        val names=state.sessions.filter {it.sessionId in selection}.sortedBy {it.startedAtEpochMs}
+        RecordNameDialog(title="合并 ${names.size} 条记录",
+            initial=names.firstOrNull()?.participantAlias?.let {"$it 等 ${names.size} 段"} ?: "合并记录",
+            confirmLabel="合并",
+            body="合并会生成一条新记录并把原记录删除。原记录的日志会重新串成一条新链，链头写入溯源信息。",
+            onConfirm={ name -> actions.mergeSessions(selection.toList(),name);mergeOpen=false;selection=emptySet() },
+            onDismiss={mergeOpen=false})
+    }
+    if(deleteTargets.isNotEmpty()) AlertDialog(
+        onDismissRequest={deleteTargets=emptyList()},
+        title={Text(if(deleteTargets.size==1) "删除这条记录？" else "删除这 ${deleteTargets.size} 条记录？")},
+        text={Text("照片与日志都会从这台手机移除，无法恢复。")},
+        confirmButton={TextButton(onClick={actions.deleteSessions(deleteTargets);deleteTargets=emptyList();selection=emptySet()}) {Text("删除",color=MaterialTheme.colorScheme.error)}},
+        dismissButton={TextButton(onClick={deleteTargets=emptyList()}) {Text("保留")}},
+    )
+}
+
+/** Shared name prompt for renaming and for naming a merged record. */
+@Composable private fun RecordNameDialog(title: String,initial: String,confirmLabel: String,body: String?=null,onConfirm: (String)->Unit,onDismiss: ()->Unit) {
+    var name by remember(initial) {mutableStateOf(initial)}
+    AlertDialog(
+        onDismissRequest=onDismiss,
+        title={Text(title)},
+        text={ Column(verticalArrangement=Arrangement.spacedBy(10.dp)) {
+            body?.let {Text(it,style=MaterialTheme.typography.bodySmall,color=Quiet)}
+            OutlinedTextField(name,{name=it.take(80)},singleLine=true,label={Text("记录名称")})
+        } },
+        confirmButton={TextButton(onClick={onConfirm(name)},enabled=name.isNotBlank()) {Text(confirmLabel)}},
+        dismissButton={TextButton(onClick=onDismiss) {Text("取消")}},
+    )
 }
 
 @Composable private fun LivePanel(state: OperatorViewState,actions: OperatorActions) {
@@ -355,10 +425,15 @@ internal fun sessionError(code: String)=when(code) {
         Text("凭证仅保存在此手机的应用私有空间，不进入日志和模型请求。",style=MaterialTheme.typography.bodySmall,color=Quiet)
     }
 }
-@Composable private fun SessionRow(session: StudySessionEntity,onClick: ()->Unit) {
-    Surface(shape=RoundedCornerShape(16.dp),color=MaterialTheme.colorScheme.surface,modifier=Modifier.fillMaxWidth().testTag("session-${session.sessionId}").clickable(onClick=onClick)) {
+@OptIn(ExperimentalFoundationApi::class)
+@Composable private fun SessionRow(session: StudySessionEntity,selected: Boolean,selectable: Boolean,onClick: ()->Unit,onLongClick: ()->Unit) {
+    Surface(shape=RoundedCornerShape(16.dp),color=if(selected) Color(0xFFE0EBDF) else MaterialTheme.colorScheme.surface,
+        modifier=Modifier.fillMaxWidth().testTag("session-${session.sessionId}").combinedClickable(onClick=onClick,onLongClick=onLongClick)) {
         Column(Modifier.padding(18.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-            Row {Text(session.participantAlias,style=MaterialTheme.typography.titleMedium,modifier=Modifier.weight(1f),maxLines=1,overflow=TextOverflow.Ellipsis);Tag(if(session.endedAtEpochMs==null) "未结束" else "已结束",if(session.endedAtEpochMs==null) Amber else Quiet)}
+            Row(verticalAlignment=Alignment.CenterVertically) {
+                if(selectable) {Checkbox(checked=selected,onCheckedChange=null);Spacer(Modifier.width(4.dp))}
+                Text(session.participantAlias,style=MaterialTheme.typography.titleMedium,modifier=Modifier.weight(1f),maxLines=1,overflow=TextOverflow.Ellipsis)
+                Tag(if(session.endedAtEpochMs==null) "未结束" else "已结束",if(session.endedAtEpochMs==null) Amber else Quiet)}
             Text(SimpleDateFormat("MM月dd日 HH:mm",Locale.CHINA).format(Date(session.startedAtEpochMs)),style=MaterialTheme.typography.bodySmall,color=Quiet)
             Text(if(session.scenarioId=="local-collection-v1") "图片采集" else "在线服务与历史",style=MaterialTheme.typography.bodySmall,color=Quiet)
         }

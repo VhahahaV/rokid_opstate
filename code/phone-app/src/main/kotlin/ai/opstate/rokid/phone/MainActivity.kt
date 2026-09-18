@@ -139,6 +139,7 @@ class MainActivity : ComponentActivity() {
                         collectionHistorySessionId=options.collectionHistorySessionId,collectionHistoryImageLimit=options.collectionHistoryImageLimit))))}},
                 pause={operate {graph.studyRuntime.pauseSession()}},
                 syncPhotos={graph.studyRuntime.syncPhotos()},
+                renameSession={id,name->renameSession(id,name)},deleteSessions={ids->deleteSessions(ids)},mergeSessions={ids,name->mergeSessions(ids,name)},
                 resume={operate {graph.studyRuntime.resumeSession()}},
                 seek={position->operate {graph.studyRuntime.seekTo(position).getOrThrow()}},
                 previewHistory={index->historyPreviewJob?.cancel();historyPreviewJob=scope.launch {
@@ -212,6 +213,22 @@ class MainActivity : ComponentActivity() {
         withContext(Dispatchers.IO) {graph.journal.delete(id)}
         viewState.update {it.copy(selectedSession=null,selectedTrial=null,busy=false)};message("本地会话已删除")
     }
+    private fun renameSession(id: String,name: String)=operate {
+        withContext(Dispatchers.IO) {graph.journal.rename(id,name)}
+        message("记录已重命名")
+    }
+    private fun deleteSessions(ids: List<String>)=operate {
+        check(ids.none {it==graph.studyRuntime.state.value.sessionId}) { "RECORD_IN_USE" }
+        check(!(graph.datasetReplay.state.value.running && graph.datasetReplay.state.value.sessionId in ids)) { "RECORD_IN_USE" }
+        withContext(Dispatchers.IO) {graph.journal.deleteMany(ids)}
+        viewState.update {it.copy(selectedSession=null,selectedTrial=null)}
+        message(if(ids.size==1) "记录已删除" else "已删除 ${ids.size} 条记录")
+    }
+    private fun mergeSessions(ids: List<String>,name: String)=operate {
+        check(ids.none {it==graph.studyRuntime.state.value.sessionId}) { "RECORD_IN_USE" }
+        val merged=withContext(Dispatchers.IO) {graph.journal.merge(ids,name)}
+        message("已合并为「$name」，共 ${ids.size} 段")
+    }
     private fun message(text: String) { viewState.update {it.copy(message=text)} }
     private fun showError(error: Throwable) {
         if(BuildConfig.DEBUG) android.util.Log.e("OPSTATE_UI",error.javaClass.simpleName+"\n"+error.stackTrace.take(8).joinToString("\n"))
@@ -223,6 +240,12 @@ class MainActivity : ComponentActivity() {
             "BLUETOOTH_DISABLED" -> "系统蓝牙尚未打开。"
             "NO_SAVED_DEVICE" -> "尚无保存的设备，请先扫描附近眼镜。"
             "GLASSES_APP_HANDSHAKE_TIMEOUT" -> "眼镜研究应用尚未响应，请打开眼镜端 OPSTATE 应用。"
+            "RECORD_IN_USE" -> "这段记录正在采集中，结束采集后才能重命名、合并或删除。"
+            "STOP_SESSION_BEFORE_MERGE" -> "只有已结束的记录才能合并。"
+            "STOP_SESSION_BEFORE_DELETE" -> "这段记录还没有正常结束，先结束采集再删除。"
+            "INVALID_RECORD_NAME" -> "记录名称不能为空，且不超过 80 个字。"
+            "MERGE_IMAGES_TOO_LARGE" -> "合并后的照片过多，请分批合并。"
+            "MERGE_IMAGE_ID_COLLISION" -> "两条记录里有同名的照片，无法自动合并，请先导出其中之一。"
             "CXR_SOCKET_CONNECT_FAILED" -> "应用连接信息可能已失效。请折叠镜腿并三击功能键，再重新扫描连接。系统音频配对可以保持不变。"
             "CXR_OTHER_CLIENT_ACTIVE" -> "眼镜的应用通道正被其他客户端使用，请先在那个客户端断开后再连接。"
             "CXR_SN_CHECK_FAILED" -> "设备授权校验失败，请核对 Client Secret 和 SN 文件。"

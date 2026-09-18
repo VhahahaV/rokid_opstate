@@ -33,18 +33,21 @@ class StudyJournal(private val context: Context,val database: StudyDatabase) {
             }
         }
     }
-    fun append(id: String,stream: String,type: String,payload: JsonObject,atEpochMs: Long): JournalEntity {
-        require(stream in streams) { "UNKNOWN_EXPORT_STREAM" }
+    /** The single definition of the chain link, shared by live appends and by merges that re-chain. */
+    private fun chained(id: String,sequence: Long,stream: String,type: String,payload: JsonObject,atEpochMs: Long,previousHash: String): JournalEntity {
         val canonical=canonical(payload).toString()
         val payloadHash=StudyWire.sha256(canonical.toByteArray())
+        val hash=StudyWire.sha256("$sequence|$type|$atEpochMs|$payloadHash|$previousHash".toByteArray())
+        return JournalEntity(id,sequence,stream,type,atEpochMs,canonical,payloadHash,previousHash,hash,
+            (payload["packet_id"] ?: payload["anchor_id"])?.jsonPrimitive?.contentOrNull,payload["asset_id"]?.jsonPrimitive?.contentOrNull)
+    }
+    fun append(id: String,stream: String,type: String,payload: JsonObject,atEpochMs: Long): JournalEntity {
+        require(stream in streams) { "UNKNOWN_EXPORT_STREAM" }
         return database.runInTransaction<JournalEntity> {
             check(dao.session(id)!=null) { "UNKNOWN_SESSION" }
             val previous=dao.lastJournal(id)
-            val sequence=(previous?.sequence ?: -1)+1
-            val previousHash=previous?.chainHash ?: "0".repeat(64)
-            val hash=StudyWire.sha256("$sequence|$type|$atEpochMs|$payloadHash|$previousHash".toByteArray())
-            JournalEntity(id,sequence,stream,type,atEpochMs,canonical,payloadHash,previousHash,hash,
-                (payload["packet_id"] ?: payload["anchor_id"])?.jsonPrimitive?.contentOrNull,payload["asset_id"]?.jsonPrimitive?.contentOrNull).also(dao::insertJournal)
+            chained(id,(previous?.sequence ?: -1)+1,stream,type,payload,atEpochMs,previous?.chainHash ?: "0".repeat(64))
+                .also(dao::insertJournal)
         }
     }
     fun image(id: String,captureId: String,bytes: ByteArray,expectedHash: String): String {
@@ -187,6 +190,107 @@ class StudyJournal(private val context: Context,val database: StudyDatabase) {
             writers.values.forEach { runCatching { it.close() } }
             directory.deleteRecursively()
         }
+    }
+    /** The name a record is listed under is `participantAlias`; the audit chain stores no alias, so
+     *  renaming cannot invalidate it. */
+    @Synchronized fun rename(id: String,name: String) {
+        val trimmed=name.trim()
+        require(trimmed.isNotBlank() && trimmed.length<=80) { "INVALID_RECORD_NAME" }
+        val session=requireNotNull(dao.session(id)) { "UNKNOWN_SESSION" }
+        dao.updateSession(session.copy(participantAlias=trimmed))
+    }
+    @Synchronized fun deleteMany(ids: List<String>) { ids.forEach(::delete) }
+
+    private data class MergeSource(val session: StudySessionEntity,val rows: List<JournalEntity>)
+    private fun copyImages(sources: List<MergeSource>,target: String) {
+        val directory=File(sessionDirectory(target),"images").apply { mkdirs() }
+        for(source in sources) {
+            for(file in File(sessionDirectory(source.session.sessionId),"images").listFiles()?.sortedBy { it.name } ?: emptyList()) {
+                val destination=File(directory,file.name)
+                if(destination.exists()) check(hashFile(destination)==hashFile(file)) { "MERGE_IMAGE_ID_COLLISION" }
+                else file.copyTo(destination)
+            }
+        }
+    }
+    private fun copyMetadata(sources: List<String>,target: String) {
+        for(id in sources) {
+            dao.contextEvents(id).forEach {dao.contextEvent(it.copy(sessionId=target))}
+            dao.observations(id).forEach {dao.observation(it.copy(sessionId=target))}
+            dao.sensorWindows(id).forEach {dao.sensorWindow(it.copy(sessionId=target))}
+            dao.episodes(id).forEach {dao.episode(it.copy(sessionId=target))}
+            dao.anchors(id).forEach {dao.anchor(it.copy(sessionId=target))}
+            dao.requests(id).forEach {dao.inference(it.copy(sessionId=target))}
+            dao.decisions(id).forEach {dao.decision(it.copy(sessionId=target))}
+            dao.deliveries(id).forEach {dao.delivery(it.copy(sessionId=target))}
+            dao.receipts(id).forEach {dao.receipt(it.copy(sessionId=target))}
+            dao.audits(id).forEach {dao.audit(it.copy(sessionId=target))}
+        }
+    }
+    /**
+     * Folds finished records into one. Journals are chained per session and seeded from 64 zeros, so two
+     * chains cannot be spliced: the merged record gets a fresh chain opening with a provenance header
+     * that names the sources and their chain heads, followed by every source event in time order,
+     * re-chained. Payloads are copied verbatim, so each event still describes the session it came from
+     * and the merged journal reads as the concatenation it is.
+     *
+     * Sources are removed only after the merged record is complete, so an interrupted merge leaves the
+     * originals intact and the half-built record clearly unfinished (no STOPPED checkpoint), which is
+     * the state [delete] and [export] both already refuse to operate on.
+     */
+    @Synchronized fun merge(ids: List<String>,name: String): String {
+        require(ids.size>=2 && ids.toSet().size==ids.size) { "MERGE_REQUIRES_DISTINCT_RECORDS" }
+        val trimmed=name.trim()
+        require(trimmed.isNotBlank() && trimmed.length<=80) { "INVALID_RECORD_NAME" }
+        val sources=ids.map { id ->
+            val session=requireNotNull(dao.session(id)) { "UNKNOWN_SESSION" }
+            check(session.endedAtEpochMs!=null && dao.checkpoint(id)?.state in setOf(null,"STOPPED")) { "STOP_SESSION_BEFORE_MERGE" }
+            val rows=ArrayList<JournalEntity>()
+            readVerified(snapshot(id)) { rows.add(it) }
+            MergeSource(session,rows)
+        }.sortedBy { it.session.startedAtEpochMs }
+        val mergedId="session-${UUID.randomUUID()}"
+        val directory=sessionDirectory(mergedId)
+        check(directory.mkdirs()) { "SESSION_DIRECTORY_CREATE_FAILED" }
+        try {
+            copyImages(sources,mergedId)
+            database.runInTransaction {
+                val first=sources.first().session
+                val started=first.startedAtEpochMs
+                val ended=sources.maxOf {requireNotNull(it.session.endedAtEpochMs)}
+                dao.insertSession(StudySessionEntity(mergedId,first.sessionEpoch,trimmed,first.scenarioId,
+                    first.conditionCode,started,null,first.appVersion,first.configHash))
+                var previous="0".repeat(64)
+                var sequence=0L
+                fun link(stream: String,type: String,payload: JsonObject,at: Long) {
+                    val row=chained(mergedId,sequence,stream,type,payload,at,previous)
+                    dao.insertJournal(row);previous=row.chainHash;sequence++
+                }
+                link("runtime_events","SESSION_MERGE",StudyWire.payload(
+                    "merged_session_id" to mergedId,"record_name" to trimmed,
+                    "merged_at_epoch_ms" to System.currentTimeMillis(),
+                    "sources" to JsonArray(sources.map { source ->
+                        StudyWire.payload("session_id" to source.session.sessionId,
+                            "participant_alias" to source.session.participantAlias,
+                            "started_at_epoch_ms" to source.session.startedAtEpochMs,
+                            "ended_at_epoch_ms" to source.session.endedAtEpochMs,
+                            "journal_entries" to source.rows.size,
+                            "audit_head_sha256" to (source.rows.lastOrNull()?.chainHash ?: "0".repeat(64)))})),started)
+                for(source in sources) for(row in source.rows)
+                    link(row.stream,row.eventType,StudyWire.json.parseToJsonElement(row.canonicalJson).jsonObject,row.eventAtEpochMs)
+                copyMetadata(ids,mergedId)
+                dao.updateSession(requireNotNull(dao.session(mergedId)).copy(endedAtEpochMs=ended))
+                // Inherit the earliest source's frozen configuration so the merged record stays
+                // exportable; export refuses a session whose checkpoint records no contract.
+                val inherited=dao.checkpoint(first.sessionId)?.stateJson
+                    ?.let {runCatching {StudyWire.json.parseToJsonElement(it).jsonObject}.getOrNull()} ?: JsonObject(emptyMap())
+                checkpoint(mergedId,first.sessionEpoch,"STOPPED",
+                    JsonObject(inherited+("merged_from" to JsonArray(sources.map {JsonPrimitive(it.session.sessionId)}))),ended)
+            }
+        } catch(error: Throwable) {
+            directory.deleteRecursively();throw error
+        }
+        deleteMany(ids)
+        return mergedId
     }
     @Synchronized fun delete(id: String) {
         check(dao.checkpoint(id)?.state in setOf(null,"STOPPED")) { "STOP_SESSION_BEFORE_DELETE" }

@@ -79,6 +79,13 @@ interface StudyDao {
     @Query("SELECT * FROM observation WHERE sessionId=:id ORDER BY availableAtEpochMs") fun observations(id: String): List<ObservationEntity>
     @Query("SELECT * FROM action_receipt WHERE sessionId=:id ORDER BY visibleAtEpochMs") fun receipts(id: String): List<ActionReceiptEntity>
     @Query("SELECT * FROM episode WHERE sessionId=:id") fun episodes(id: String): List<EpisodeEntity>
+    @Query("SELECT * FROM context_event WHERE sessionId=:id ORDER BY availableAtEpochMs") fun contextEvents(id: String): List<ContextEventEntity>
+    @Query("SELECT * FROM sensor_window WHERE sessionId=:id ORDER BY windowEndElapsedMs") fun sensorWindows(id: String): List<SensorWindowEntity>
+    @Query("SELECT * FROM anchor_candidate WHERE sessionId=:id ORDER BY anchorTimeEpochMs") fun anchors(id: String): List<AnchorCandidateEntity>
+    @Query("SELECT * FROM inference_request WHERE sessionId=:id ORDER BY requestedAtEpochMs") fun requests(id: String): List<InferenceRequestEntity>
+    @Query("SELECT * FROM decision WHERE sessionId=:id ORDER BY producedAtEpochMs") fun decisions(id: String): List<DecisionEntity>
+    @Query("SELECT * FROM delivery WHERE sessionId=:id ORDER BY sentAtEpochMs") fun deliveries(id: String): List<DeliveryEntity>
+    @Query("SELECT * FROM audit_event WHERE sessionId=:id ORDER BY sequenceNumber") fun audits(id: String): List<AuditEventEntity>
     @Query("DELETE FROM observation WHERE sessionId=:id") fun deleteObservations(id: String)
     @Query("DELETE FROM context_event WHERE sessionId=:id") fun deleteContext(id: String)
     @Query("DELETE FROM sensor_window WHERE sessionId=:id") fun deleteSensors(id: String)
