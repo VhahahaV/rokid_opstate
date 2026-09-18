@@ -28,6 +28,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
+import java.io.File
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -54,6 +55,8 @@ data class SessionSetup(val participantAlias: String,val endpoint: String,
     /** Demo mode: run under the forced-service prompt so every call returns a service to show. */
     val forceService: Boolean=false,
     val glassesCapture: Boolean=false,val syncBatchSize: Int=60)
+/** A stored frame the operator picked to evaluate, with the measurements already recorded for it. */
+data class ChosenPhoto(val path: String,val width: Int,val height: Int,val rotationDegrees: Int,val sha256: String)
 data class RuntimeCandidate(val handle: String,val revision: Long,val mode: String)
 data class RuntimeViewState(val phase: String="IDLE",val sessionId: String?=null,val scenario: String?=null,
     val observations: Int=0,val packets: Int=0,val receipts: Int=0,val rawDecision: String?=null,
@@ -132,6 +135,9 @@ class StudyRuntimeEngine(
         data class Seek(val positionMs: Long,val reply: CompletableDeferred<Result<Unit>>): Event()
         data class SeekHistory(val index: Int,val reply: CompletableDeferred<Result<Unit>>): Event()
         data class ContextInput(val input: SyntheticContextInput,val reply: CompletableDeferred<Result<Unit>>): Event()
+        /** Run the chain on evidence the operator picked, instead of on a fresh capture. */
+        data class EvaluatePhoto(val photo: ChosenPhoto,val reply: CompletableDeferred<Result<Unit>>): Event()
+        data class EvaluateContext(val input: SyntheticContextInput,val reply: CompletableDeferred<Result<Unit>>): Event()
         data class AutoCapture(val enabled: Boolean): Event()
         data class DemoMode(val enabled: Boolean): Event()
         data object Tick: Event()
@@ -154,6 +160,8 @@ class StudyRuntimeEngine(
                     is Event.Seek -> seek(event)
                     is Event.SeekHistory -> seekHistory(event)
                     is Event.ContextInput -> {addContext(event.input);event.reply.complete(Result.success(Unit))}
+                    is Event.EvaluatePhoto -> {chosenPhoto(chosenSession(),event.photo);event.reply.complete(Result.success(Unit))}
+                    is Event.EvaluateContext -> {evaluateNow(chosenSession(),addContext(event.input));event.reply.complete(Result.success(Unit))}
                     is Event.AutoCapture -> active?.let {session->session.automaticCapture=event.enabled
                         journal.append(session.id,"runtime_events","AUTOMATIC_CAPTURE_CHANGED",StudyWire.payload("enabled" to event.enabled),System.currentTimeMillis())
                         _state.update {it.copy(automaticCapture=event.enabled)};configureGlasses(session)}
@@ -200,6 +208,19 @@ class StudyRuntimeEngine(
     fun setAutomaticCapture(enabled: Boolean) {inbox.trySend(Event.AutoCapture(enabled))}
     fun setGlassesDemoMode(enabled: Boolean) {inbox.trySend(Event.DemoMode(enabled))}
     suspend fun addSyntheticContext(input: SyntheticContextInput): Result<Unit> {val reply=CompletableDeferred<Result<Unit>>();inbox.send(Event.ContextInput(input,reply));return reply.await()}
+    /**
+     * Runs the same chain the glasses would, on evidence the operator picked instead of a fresh
+     * capture: the chosen frame becomes the observation, and everything after it - causal history,
+     * packet, model, card, two-frame ack - is unchanged. Used to stage a demonstration from material
+     * that is already on the phone.
+     */
+    suspend fun evaluateChosenPhoto(photo: ChosenPhoto): Result<Unit> {
+        val reply=CompletableDeferred<Result<Unit>>();inbox.send(Event.EvaluatePhoto(photo,reply));return reply.await()
+    }
+    /** Appends the chosen note and evaluates immediately, rather than waiting for the glasses to capture. */
+    suspend fun evaluateChosenContext(input: SyntheticContextInput): Result<Unit> {
+        val reply=CompletableDeferred<Result<Unit>>();inbox.send(Event.EvaluateContext(input,reply));return reply.await()
+    }
     fun stopSoon() {scope.launch {runCatching {stopSession()}}}
     private fun nextEpoch(): Long {
         val preferences=context.getSharedPreferences("runtime-epoch",Context.MODE_PRIVATE)
@@ -626,7 +647,8 @@ class StudyRuntimeEngine(
             "byte_length" to frame.jpegBytes.size,"camera_duration_ms" to frame.cameraDurationMs,"transfer_duration_ms" to frame.transferDurationMs,"capture_round_trip_ms" to roundTripMs,
             "rotation_degrees" to frame.rotationDegrees,"quality_valid" to quality.valid,"quality_status" to quality.status.name,
             "mean_luma" to quality.meanLuma,"blur_score" to quality.blurScore,"dark_pixel_ratio" to quality.darkPixelRatio,"bright_pixel_ratio" to quality.brightPixelRatio,
-            "transfer_channel" to frame.transferChannel,"asset_source" to if(frame.transferChannel=="TEST_FIXTURE") "TEST_FIXTURE" else "LIVE_CAMERA")))
+            "transfer_channel" to frame.transferChannel,"asset_source" to when(frame.transferChannel) {
+                "TEST_FIXTURE"->"TEST_FIXTURE";"CHOSEN_SOURCE"->"CHOSEN_SOURCE";else->"LIVE_CAMERA"})))
         journal.append(session.id,"captures","CAPTURE_COMPLETED",StudyWire.payload("capture_id" to frame.captureId,"status" to "COMPLETED",
             "channel" to frame.transferChannel,"quality_valid" to quality.valid,"received_at_epoch_ms" to frame.receivedAtEpochMs,
             "camera_duration_ms" to frame.cameraDurationMs,"transfer_duration_ms" to frame.transferDurationMs,"capture_round_trip_ms" to roundTripMs),frame.receivedAtEpochMs)
@@ -811,7 +833,32 @@ class StudyRuntimeEngine(
         stop()
         begin(Event.Start(setup,event.reply))
     }
-    private suspend fun addContext(input: SyntheticContextInput) {
+    private fun chosenSession(): Session {
+        val session=active ?: error("NO_ACTIVE_SESSION")
+        check(session.setup.mode==SessionMode.SERVICE) {"CHOSEN_SOURCE_REQUIRES_SERVICE_MODE"}
+        return session
+    }
+    /**
+     * Feeds a picked frame through the same path a glasses capture takes. Marked `buffered` and given a
+     * fresh id so the capture-flow guard passes, and labelled CHOSEN_SOURCE so the export never reads it
+     * back as something the camera saw.
+     */
+    private suspend fun chosenPhoto(session: Session,photo: ChosenPhoto) {
+        val bytes=File(photo.path).readBytes()
+        val sha=StudyWire.sha256(bytes)
+        require(sha==photo.sha256) {"CHOSEN_PHOTO_CHANGED"}
+        val frame=ImageFrame("chosen-${UUID.randomUUID()}",System.currentTimeMillis(),System.currentTimeMillis(),bytes,
+            photo.width,photo.height,photo.rotationDegrees,sha,"CHOSEN_SOURCE",buffered=true,
+            sourceMetadata=StudyWire.payload("trigger_types" to JsonArray(listOf(JsonPrimitive("MANUAL")))))
+        image(session,frame)
+    }
+    /** Evaluates now on the most recent frame, with a freshly added note as the new evidence. */
+    private fun evaluateNow(session: Session,observation: ObservationRecord) {
+        val packet=ObservationPacket("chosen-${UUID.randomUUID()}",observation.availableAtEpochMs,setOf("MANUAL"),
+            listOf(observation.observationId),listOfNotNull(observation.assetId),emptyList(),0L,false)
+        recordPackets(session,listOf(packet));kickModel(session);updatePhase(session)
+    }
+    private suspend fun addContext(input: SyntheticContextInput): ObservationRecord {
         input.validate()
         val session=active ?: error("NO_ACTIVE_SESSION")
         check(session.setup.mode==SessionMode.SERVICE) {"CONTEXT_REQUIRES_SERVICE_MODE"}
@@ -843,6 +890,7 @@ class StudyRuntimeEngine(
           else transport.command(transport.controlMessage("SHOW_CONTEXT_CARD",payload,30_000)).getOrThrow()
         }
         refreshCandidates(session);updatePhase(session);checkpoint(session);sendDemoStatus(session)
+        return observation
     }
     private suspend fun seekHistory(event: Event.SeekHistory) {
         val session=active ?: error("NO_ACTIVE_SESSION")

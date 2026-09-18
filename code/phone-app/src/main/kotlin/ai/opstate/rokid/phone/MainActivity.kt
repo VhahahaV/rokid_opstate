@@ -24,6 +24,9 @@ import ai.opstate.rokid.phone.ui.*
 import ai.opstate.rokid.phone.runtime.StudyRuntimeService
 import ai.opstate.rokid.phone.runtime.SessionSetup
 import ai.opstate.rokid.phone.runtime.SessionMode
+import ai.opstate.rokid.phone.runtime.ChosenPhoto
+import ai.opstate.rokid.phone.runtime.SyntheticContextInput
+import ai.opstate.rokid.phone.runtime.SyntheticContextType
 import ai.opstate.rokid.phone.scenario.StudyScenarioDto
 import ai.opstate.rokid.phone.scenario.timeline
 import ai.opstate.rokid.phone.runtime.RemoteHarnessClient
@@ -112,6 +115,11 @@ class MainActivity : ComponentActivity() {
             val screenState=rememberSaveableStateHolder()
             val selected=state.selectedSession
             val selectedTrial=state.selectedTrial
+            // Sources for a staged run: what is already on the phone, offered when the operator asks.
+            var pickPhoto by remember { mutableStateOf(false) }
+            var pickContext by remember { mutableStateOf(false) }
+            var photoChoices by remember { mutableStateOf<List<CapturedPhoto>>(emptyList()) }
+            var contextChoices by remember { mutableStateOf<List<ContextEntry>>(emptyList()) }
             StudyTheme {
                 if(selected!=null) screenState.SaveableStateProvider("review-${selected.session.sessionId}-${selectedTrial?.summary?.anchorId ?: "list"}") {
                     SessionReviewScreen(selected,selectedTrial,state.busy,state.message,
@@ -171,6 +179,16 @@ class MainActivity : ComponentActivity() {
                 seekHistory={index->operate {graph.studyRuntime.seekHistoryTo(index).getOrThrow()}},
                 automaticCapture=graph.studyRuntime::setAutomaticCapture,demoMode=graph.studyRuntime::setGlassesDemoMode,
                 addContext={input,done->operate {graph.studyRuntime.addSyntheticContext(input).getOrThrow();message("合成情境已加入，后续评估将使用这条信息");done()}},
+                pickPhoto={ operate {
+                    val sessionId=state.runtime.sessionId ?: return@operate
+                    photoChoices=withContext(Dispatchers.IO) {SessionReviewRepository(graph.journal).photos(sessionId)}
+                    if(photoChoices.isEmpty()) message("这次会话还没有照片") else pickPhoto=true
+                } },
+                pickContext={ operate {
+                    val sessionId=state.runtime.sessionId ?: return@operate
+                    contextChoices=withContext(Dispatchers.IO) {SessionReviewRepository(graph.journal).contexts(sessionId)}
+                    if(contextChoices.isEmpty()) message("这次会话还没有情境") else pickContext=true
+                } },
                 stop={startService(Intent(this,StudyRuntimeService::class.java).setAction(StudyRuntimeService.ACTION_STOP))},
                 capture={graph.studyRuntime.captureNow()},
                 startReplay={limit->startForegroundService(Intent(this,DatasetReplayService::class.java).putExtra("limit",limit))},
@@ -207,6 +225,25 @@ class MainActivity : ComponentActivity() {
                 }},
             )) }
                 state.logSessionId?.let {id->RuntimeLogSheet(state.runtimeLogs,state.busy,refresh={openLogs(id)},close={viewState.update {it.copy(logSessionId=null)}})}
+                if(pickPhoto) ChosenPhotoPicker(photoChoices,onDismiss={pickPhoto=false}) { photo->
+                    pickPhoto=false
+                    operate {
+                        val meta=photo.metadata
+                        graph.studyRuntime.evaluateChosenPhoto(ChosenPhoto(photo.file.path,
+                            meta.string("width")?.toIntOrNull() ?: 0,meta.string("height")?.toIntOrNull() ?: 0,
+                            meta.string("rotation_degrees")?.toIntOrNull() ?: 0,meta.string("sha256").orEmpty())).getOrThrow()
+                        message("已用选中的照片跑一次完整链路")
+                    }
+                }
+                if(pickContext) ChosenContextPicker(contextChoices,onDismiss={pickContext=false}) { entry->
+                    pickContext=false
+                    operate {
+                        graph.studyRuntime.evaluateChosenContext(SyntheticContextInput(
+                            runCatching {SyntheticContextType.valueOf(entry.type)}.getOrDefault(SyntheticContextType.NOTE),
+                            entry.title,entry.text)).getOrThrow()
+                        message("已用选中的情境跑一次完整链路")
+                    }
+                }
             }
         }
         importDebugCredentials(intent)

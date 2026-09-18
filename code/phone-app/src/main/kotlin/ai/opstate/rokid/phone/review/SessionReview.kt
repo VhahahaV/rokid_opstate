@@ -32,7 +32,9 @@ fun timelineItems(photos: List<CapturedPhoto>,contexts: List<ContextEntry>,desce
     }
     return merged
 }
-data class CapturedPhoto(val id: String,val file: File,val capturedAt: Long,val receivedAt: Long,val metadata: JsonObject) {
+data class CapturedPhoto(val id: String,val file: File,val capturedAt: Long,val receivedAt: Long,val metadata: JsonObject,
+    /** True when this frame is the one a delivered service was reading. Worth marking: it is the shot. */
+    val served: Boolean=false) {
     val historical get()=metadata.string("source")?.endsWith("HISTORY")==true
 }
 data class TrialReview(val summary: TrialSummary,val request: JsonObject?,val raw: JsonObject?,val decision: JsonObject?,val image: File?,val providerRaw: JsonObject?=null)
@@ -40,14 +42,25 @@ class SessionReviewRepository(private val journal: StudyJournal) {
     private val dao get()=journal.dao
     private fun JournalEntity.json()=StudyWire.json.parseToJsonElement(canonicalJson).jsonObject
     private fun find(id: String,stream: String,anchor: String)=dao.eventForAnchor(id,stream,anchor)?.json()
-    fun photos(id: String): List<CapturedPhoto> = dao.stream(id,"observations").mapNotNull {event->
-        val row=event.json()
-        if(row.string("kind")!="IMAGE") return@mapNotNull null
-        val path=row.string("local_relative_path") ?: return@mapNotNull null
-        CapturedPhoto(row.string("observation_id") ?: event.sequence.toString(),journal.localImage(id,path),
-            row["source_occurred_at_epoch_ms"]?.jsonPrimitive?.longOrNull ?: row["occurred_at_epoch_ms"]?.jsonPrimitive?.longOrNull ?: 0,
-            row["available_at_epoch_ms"]?.jsonPrimitive?.longOrNull ?: 0,row)
-    }.sortedByDescending {it.capturedAt}
+    /** The frames a delivered service was reading, so a photograph that produced one can be marked. */
+    private fun servedAssets(id: String): Set<String> {
+        fun key(row: JsonObject)=row.string("packet_id") ?: row.string("anchor_id")
+        val requests=dao.stream(id,"inference_requests").map {it.json()}.associateBy(::key)
+        return dao.stream(id,"decisions").map {it.json()}.filter {it.string("decision")=="SERVICE"}
+            .mapNotNull {requests[key(it)]?.string("current_asset_id")}.toSet()
+    }
+    fun photos(id: String): List<CapturedPhoto> {
+        val served=servedAssets(id)
+        return dao.stream(id,"observations").mapNotNull {event->
+            val row=event.json()
+            if(row.string("kind")!="IMAGE") return@mapNotNull null
+            val path=row.string("local_relative_path") ?: return@mapNotNull null
+            CapturedPhoto(row.string("observation_id") ?: event.sequence.toString(),journal.localImage(id,path),
+                row["source_occurred_at_epoch_ms"]?.jsonPrimitive?.longOrNull ?: row["occurred_at_epoch_ms"]?.jsonPrimitive?.longOrNull ?: 0,
+                row["available_at_epoch_ms"]?.jsonPrimitive?.longOrNull ?: 0,row,
+                served=row.string("asset_id")?.let {it in served}==true)
+        }.sortedByDescending {it.capturedAt}
+    }
     fun contexts(id: String): List<ContextEntry> = dao.stream(id,"observations").mapNotNull {event->
         val row=event.json()
         if(row.string("kind")!="SYNTHETIC_CONTEXT") return@mapNotNull null

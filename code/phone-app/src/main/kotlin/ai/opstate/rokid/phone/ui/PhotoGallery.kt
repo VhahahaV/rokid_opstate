@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -59,6 +61,11 @@ internal fun photoTime(at: Long,pattern: String="MM月dd日 HH:mm:ss")=if(at>0) 
         PhotoPreview(photo,Modifier.fillMaxSize())
         Text(photoTime(photo.capturedAt,"HH:mm:ss"),color=Color.White,style=MaterialTheme.typography.labelSmall,
             modifier=Modifier.align(Alignment.BottomStart).fillMaxWidth().background(Color.Black.copy(alpha=.45f)).padding(6.dp))
+        // The shot that produced a delivered service. Marked hard, because in a grid of thumbnails it is
+        // the one that matters and the one you would otherwise have to open every image to find.
+        if(photo.served) Surface(Modifier.align(Alignment.TopStart).padding(4.dp),color=Success,shape=RoundedCornerShape(4.dp)) {
+            Text("主动服务",style=MaterialTheme.typography.labelSmall,color=Color.White,modifier=Modifier.padding(horizontal=5.dp,vertical=2.dp))
+        }
         if(photo.historical) Text("历史",style=MaterialTheme.typography.labelSmall,color=Color.White,
             modifier=Modifier.align(Alignment.TopEnd).background(Ink.copy(alpha=.75f)).padding(4.dp))
     }
@@ -146,14 +153,23 @@ internal fun LazyListScope.timeline(items: List<TimelineItem>,open: (String)->Un
     Dialog(onDismissRequest=close,properties=DialogProperties(usePlatformDefaultWidth=false)) {
         Surface(Modifier.fillMaxSize(),color=Canvas) {
             Column(Modifier.safeDrawingPadding()) {
+                // A filmstrip, not a form: the list is already newest-first, so the page you are on is the
+                // most recent and dragging left walks back in time. No prev/next buttons - they fought the
+                // gesture and made the reader translate positions into directions.
+                val pager=rememberPagerState(initialPage=index) {photos.size}
+                LaunchedEffect(pager.currentPage) {photos.getOrNull(pager.currentPage)?.let {select(it.id)}}
+                val photo=photos.getOrNull(pager.currentPage) ?: return@Column
                 Row(Modifier.fillMaxWidth().padding(horizontal=12.dp),verticalAlignment=Alignment.CenterVertically) {
                     TextButton(close) {Text("关闭")}
-                    Text("${index+1} / ${photos.size}",modifier=Modifier.weight(1f),style=MaterialTheme.typography.titleMedium)
-                    TextButton({select(photos[index-1].id)},enabled=index>0) {Text("上一张")}
-                    TextButton({select(photos[index+1].id)},enabled=index<photos.lastIndex) {Text("下一张")}
+                    Text("${pager.currentPage+1} / ${photos.size}",modifier=Modifier.weight(1f),style=MaterialTheme.typography.titleMedium)
+                    if(photo.served) Tag("主动服务",Success)
                 }
+                HorizontalPager(state=pager,modifier=Modifier.fillMaxWidth()) { page ->
+                    PhotoPreview(photos[page],Modifier.fillMaxWidth().height(300.dp),full=true)
+                }
+                Text("向左拖动看更早的照片",style=MaterialTheme.typography.bodySmall,color=Quiet,
+                    modifier=Modifier.padding(horizontal=20.dp,vertical=6.dp))
                 LazyColumn(Modifier.weight(1f).testTag("photo-details"),verticalArrangement=Arrangement.spacedBy(16.dp),contentPadding=PaddingValues(bottom=24.dp)) {
-                    item {PhotoPreview(photo,Modifier.fillMaxWidth().height(300.dp),full=true)}
                     item {Column(Modifier.padding(horizontal=20.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
                         Text(photoTime(photo.capturedAt),style=MaterialTheme.typography.titleLarge)
                         Text(if(photo.historical) "导入的历史照片" else "眼镜拍摄 · 原图保存在手机",style=MaterialTheme.typography.bodySmall,color=Quiet)

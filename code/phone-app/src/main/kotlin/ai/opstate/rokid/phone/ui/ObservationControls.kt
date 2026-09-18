@@ -37,6 +37,18 @@ import ai.opstate.rokid.phone.runtime.SessionMode
         OutlinedButton(actions.capture,enabled=runtime.phase=="RUNNING" && state.peerReady && !state.busy,modifier=Modifier.weight(1f).heightIn(min=48.dp),shape=RoundedCornerShape(12.dp)) {Text(if(runtime.mode==SessionMode.COLLECTION) "立即拍一张" else "拍照观察一次")}
         if(runtime.mode==SessionMode.SERVICE) Button(addContext,enabled=!state.busy,modifier=Modifier.weight(1f).heightIn(min=48.dp),shape=RoundedCornerShape(12.dp)) {Text("添加合成情境")}
     }
+    // The same chain, on material that is already on the phone: pick a stored frame or a note and it
+    // runs from there to the card exactly as a live capture would. For staging a demonstration without
+    // having to point the glasses at anything.
+    if(runtime.mode==SessionMode.SERVICE) {
+        val ready=runtime.phase=="RUNNING" && !state.busy
+        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(actions.pickPhoto,enabled=ready,modifier=Modifier.weight(1f).heightIn(min=44.dp),shape=RoundedCornerShape(12.dp)) {Text("选图跑一次")}
+            OutlinedButton(actions.pickContext,enabled=ready,modifier=Modifier.weight(1f).heightIn(min=44.dp),shape=RoundedCornerShape(12.dp)) {Text("选情境跑一次")}
+        }
+        Text("用已有的照片或合成情境走一遍完整链路，不用现场拍摄。",
+            style=MaterialTheme.typography.bodySmall,color=Quiet)
+    }
     if(runtime.latestImagePath!=null) {
         runtime.observationStatus?.let {status->Text(when(status) {
             "IMAGE_TOO_DARK","IMAGE_TOO_BRIGHT","IMAGE_TOO_BLURRY","IMAGE_CORRUPTED"->sessionError(status)

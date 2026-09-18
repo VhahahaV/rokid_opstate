@@ -78,6 +78,8 @@ data class OperatorActions(
     val start: (SessionLaunchOptions)->Unit,val pause: ()->Unit,val resume: ()->Unit,val stop: ()->Unit,val capture: ()->Unit,val seek: (Long)->Unit,
     val previewHistory: (Int)->Unit,val seekHistory: (Int)->Unit,val automaticCapture: (Boolean)->Unit,val demoMode: (Boolean)->Unit,
     val addContext: (SyntheticContextInput,()->Unit)->Unit,
+    /** Run the chain on evidence the operator picks instead of on a fresh capture. */
+    val pickPhoto: ()->Unit={},val pickContext: ()->Unit={},
     val openLogs: (String)->Unit,
     val loadHistory: (String?,Int?,Int,()->Unit)->Unit,val clearHistory: ()->Unit,
     val syncPhotos: ()->Unit={},
