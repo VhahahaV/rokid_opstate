@@ -213,9 +213,13 @@ class GlassesStudyService : Service() {
         // Measured on the glasses: the startup card woke the panel, the page became visible, and the
         // card was still never shown. Decide first, admit once, when it is actually handled.
         if(message.type in CARD_TYPES && !graph.displayVisible.value) {
+            // Logged because a card that never arrives and a card that is waiting for a page look identical
+            // from the outside, and both look like "the glasses did not show it".
+            android.util.Log.i("OPSTATE","CARD_HELD type=${message.type} interactive=${getSystemService(PowerManager::class.java).isInteractive} held=${heldCard!=null}")
             if(!getSystemService(PowerManager::class.java).isInteractive && heldCard==null) {
                 heldCard=message;presentPage();return
             }
+            android.util.Log.i("OPSTATE","CARD_REFUSED type=${message.type} code=DISPLAY_NOT_READY")
             send("ERROR",StudyWire.payload("code" to "DISPLAY_NOT_READY"),message);return
         }
         // A replayed card belongs to no session: it demonstrates a recorded service, so it is exempt
@@ -370,6 +374,7 @@ class GlassesStudyService : Service() {
         // page can never report itself visible, so a held card is never flushed and every later card
         // is refused DISPLAY_NOT_READY. Measured on the glasses: a held startup card sat unflushed
         // while the panel stayed asleep. The wake lock is what actually lights it.
+        android.util.Log.i("OPSTATE","PAGE_WAKE starting")
         runCatching {
             power.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
                 "OPSTATE:present").acquire(3_000)
@@ -383,6 +388,7 @@ class GlassesStudyService : Service() {
     private suspend fun flushHeldCard() {
         val held=heldCard ?: return
         heldCard=null
+        android.util.Log.i("OPSTATE","CARD_FLUSH type=${held.type} displayVisible=${graph.displayVisible.value}")
         if(!graph.displayVisible.value) return
         handle(held)
     }
