@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug only, and never in a release build.
+
+  A screen like the photograph picker exists only inside a live session, so a UI test cannot reach it
+  by driving MainActivity. `createComposeRule` needs an activity of the app's own to attach its
+  composition to, and the app declares exactly one; this is that host. It is not exported and does
+  nothing.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity android:name="androidx.activity.ComponentActivity" android:exported="false" />
+    </application>
+</manifest>
