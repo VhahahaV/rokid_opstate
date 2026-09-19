@@ -169,8 +169,12 @@ class MainActivity : ComponentActivity() {
                 syncPhotos={graph.studyRuntime.syncPhotos()},
                 renameSession={id,name->renameSession(id,name)},deleteSessions={ids->deleteSessions(ids)},mergeSessions={ids,name->mergeSessions(ids,name)},
                 deleteLivePhoto={observationId->viewState.value.runtime.sessionId?.let {sessionId->deletePhoto(sessionId,observationId)}},
-                refreshShowcase={refreshShowcase()},toggleShowcaseFrame={toggleShowcaseFrame(it)},
-                moveShowcaseFrame={frame,delta->moveShowcaseFrame(frame,delta)},removeShowcaseFrame={setShowcaseSelected(it,false)},
+                refreshShowcase={refreshShowcase()},loadShowcasePhotos={loadShowcasePhotos()},
+                pickShowcaseCard={card->updateShowcase {it.copy(draft=ShowcaseDraft(card=card))}},
+                pickShowcaseScene={photo->updateShowcase {it.copy(draft=it.draft.copy(scene=photo))}},
+                useShowcaseCardScene={updateShowcase {it.copy(draft=it.draft.copy(scene=null))}},
+                addShowcaseDraft={addShowcaseDraft()},
+                removeShowcaseAt={position->removeShowcase(position)},
                 renameShowcaseGroup={renameShowcaseGroup(it)},exportShowcase={exportShowcase()},
                 replayShowcaseCard={replayServiceCard(it.sessionId,it.anchorId)},
                 resume={operate {graph.studyRuntime.resumeSession()}},
@@ -395,8 +399,8 @@ class MainActivity : ComponentActivity() {
         scope.launch {
             try {
                 graph.storageReady.await()
-                val frames=withContext(Dispatchers.IO) {ShowcaseRepository.scan(graph.journal,graph.database.dao().sessions())}
-                viewState.update {it.copy(showcase=it.showcase.copy(frames=frames,loaded=true,loading=false))}
+                val cards=withContext(Dispatchers.IO) {ShowcaseRepository.scan(graph.journal,graph.database.dao().sessions())}
+                updateShowcase {it.copy(cards=cards,loaded=true,loading=false)}
             } catch(cancelled: CancellationException) {throw cancelled}
             catch(error: Exception) {
                 viewState.update {it.copy(showcase=it.showcase.copy(loading=false))}
@@ -404,26 +408,45 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-    private fun toggleShowcaseFrame(frame: ShowcaseFrame)=setShowcaseSelected(frame,!viewState.value.showcase.selected.any {it==ShowcaseRepository.refOf(frame)})
-    private fun setShowcaseSelected(frame: ShowcaseFrame,selected: Boolean) {
-        val ref=ShowcaseRepository.refOf(frame)
-        val current=viewState.value.showcase.selected
-        // Appended, not sorted: the order the moments are chosen in is the order they will be shown in.
-        val next=if(selected) current+ref else current.filterNot {it==ref}
-        updateShowcase {it.copy(selected=next)}
+    /**
+     * Reads every photograph on the phone, for the picture slot.
+     *
+     * Separate from the scan and started only when the picker is first opened, because it is the more
+     * expensive of the two - it parses the observations of every record, where the scan parses none.
+     */
+    private fun loadShowcasePhotos() {
+        val showcase=viewState.value.showcase
+        if(showcase.photosLoading || showcase.photosLoaded) return
+        updateShowcase {it.copy(photosLoading=true)}
+        scope.launch {
+            try {
+                graph.storageReady.await()
+                val photos=withContext(Dispatchers.IO) {ShowcaseRepository.allPhotos(graph.journal,graph.database.dao().sessions())}
+                updateShowcase {it.copy(photos=photos,photosLoading=false,photosLoaded=true)}
+            } catch(cancelled: CancellationException) {throw cancelled}
+            catch(error: Exception) {
+                updateShowcase {it.copy(photosLoading=false)}
+                showError(error)
+            }
+        }
     }
-    private fun moveShowcaseFrame(frame: ShowcaseFrame,delta: Int) {
-        val ref=ShowcaseRepository.refOf(frame)
-        val selected=viewState.value.showcase.selected.toMutableList()
-        val index=selected.indexOf(ref);val target=index+delta
-        if(index<0 || target !in selected.indices) return
-        selected[index]=selected[target];selected[target]=ref
-        updateShowcase {it.copy(selected=selected)}
+    /** Appended, not sorted: the order the moments are chosen in is the order they will be shown in. */
+    private fun addShowcaseDraft() {
+        val showcase=viewState.value.showcase
+        val card=showcase.draft.card ?: return
+        updateShowcase {it.copy(selected=it.selected+ShowcaseRepository.refOf(card,showcase.draft.scene))}
+    }
+    private fun removeShowcase(index: Int)=updateShowcase {
+        if(index in it.selected.indices) it.copy(selected=it.selected.filterIndexed {position,_->position!=index}) else it
     }
     private fun renameShowcaseGroup(name: String)=updateShowcase {it.copy(group=name.trim().ifBlank {ShowcaseState.DEFAULT_GROUP})}
-    /** Every change to the shortlist is written straight through, so a selection cannot be lost to a crash. */
+    /**
+     * Every change to the shortlist is written straight through, so a selection cannot be lost to a
+     * crash. `chosen` is recomputed here rather than stored, so the rendered/exported set can never
+     * drift from the ids it was made from.
+     */
     private fun updateShowcase(change: (ShowcaseState)->ShowcaseState) {
-        viewState.update {it.copy(showcase=change(it.showcase))}
+        viewState.update {state->state.copy(showcase=ShowcaseRepository.withChosen(change(state.showcase),graph.journal::localImage))}
         val showcase=viewState.value.showcase
         ShowcaseStore.write(graph.settings,showcase.selected,showcase.group)
     }

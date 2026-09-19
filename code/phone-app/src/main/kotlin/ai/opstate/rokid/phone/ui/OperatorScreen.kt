@@ -42,7 +42,8 @@ import ai.opstate.rokid.phone.replay.HistoryPreview
 import ai.opstate.rokid.phone.replay.LocalCollectionSummary
 import ai.opstate.rokid.phone.runtime.SyntheticContextInput
 import ai.opstate.rokid.phone.review.SessionReview
-import ai.opstate.rokid.phone.review.ShowcaseFrame
+import ai.opstate.rokid.phone.review.ShowcaseCard
+import ai.opstate.rokid.phone.review.ShowcasePhoto
 import ai.opstate.rokid.phone.review.ShowcaseState
 import ai.opstate.rokid.phone.review.TrialReview
 import kotlinx.coroutines.launch
@@ -91,12 +92,14 @@ data class OperatorActions(
     val renameSession: (String,String)->Unit={_,_->},
     val deleteSessions: (List<String>)->Unit={},
     val mergeSessions: (List<String>,String)->Unit={_,_->},
-    /** The 展示 tab: a cross-record scan of every service that was really shown. */
-    val refreshShowcase: ()->Unit={},val toggleShowcaseFrame: (ShowcaseFrame)->Unit={},
-    val moveShowcaseFrame: (ShowcaseFrame,Int)->Unit={_,_->},val removeShowcaseFrame: (ShowcaseFrame)->Unit={},
+    /** The 展示 tab: a cross-record scan of every service that was really shown, and the composer. */
+    val refreshShowcase: ()->Unit={},val loadShowcasePhotos: ()->Unit={},
+    val pickShowcaseCard: (ShowcaseCard)->Unit={},val pickShowcaseScene: (ShowcasePhoto)->Unit={},
+    val useShowcaseCardScene: ()->Unit={},val addShowcaseDraft: ()->Unit={},
+    val removeShowcaseAt: (Int)->Unit={},
     val renameShowcaseGroup: (String)->Unit={},val exportShowcase: ()->Unit={},
     /** Replays one delivered card, from whichever record it came from. */
-    val replayShowcaseCard: (ShowcaseFrame)->Unit={},
+    val replayShowcaseCard: (ShowcaseCard)->Unit={},
 )
 
 @Composable fun OperatorScreen(state: OperatorViewState,actions: OperatorActions) {
@@ -111,10 +114,12 @@ data class OperatorActions(
     var renameTarget by remember { mutableStateOf<StudySessionEntity?>(null) }
     var deleteTargets by remember { mutableStateOf<List<String>>(emptyList()) }
     var mergeOpen by remember { mutableStateOf(false) }
-    // 展示 keeps its two dialogs here rather than inside the list, the way a record's photo viewer
-    // does: both are windows over the screen, not items in it.
+    // 展示 keeps its dialogs here rather than inside the list, the way a record's photo viewer does:
+    // they are windows over the screen, not items in it.
     var showcaseGroupOpen by remember { mutableStateOf(false) }
-    var showcaseFrame by remember { mutableStateOf<ShowcaseFrame?>(null) }
+    var showcaseCardPicker by remember { mutableStateOf(false) }
+    var showcaseScenePicker by remember { mutableStateOf(false) }
+    var showcaseItem by remember { mutableStateOf<Int?>(null) }
     val screenScope=rememberCoroutineScope()
     val openCredentials: ()->Unit={connection=false;tab=3;screenScope.launch {pageScrollStates[3].scrollToItem(1)}}
     BackHandler(enabled=connection || tab!=0 || selection.isNotEmpty()) {
@@ -244,7 +249,10 @@ data class OperatorActions(
                         }
                     }
                 }
-                2 -> showcase(state,actions,openGroup={showcaseGroupOpen=true},openFrame={showcaseFrame=it})
+                2 -> showcase(state,actions,openGroup={showcaseGroupOpen=true},
+                    openCardPicker={showcaseCardPicker=true},
+                    openScenePicker={showcaseScenePicker=true;actions.loadShowcasePhotos()},
+                    openItem={showcaseItem=it})
                 3 -> {
                     item {Panel {
                         Text("设备与连接",style=MaterialTheme.typography.titleMedium)
@@ -288,12 +296,22 @@ data class OperatorActions(
         body="图片写到相册 Pictures/OPSTATE/<组名>，卡片文字写到 Download/OPSTATE/<组名>。用同一个组名再导一次会替换掉上一次，不会越导越多。",
         onConfirm={name->actions.renameShowcaseGroup(name);showcaseGroupOpen=false},
         onDismiss={showcaseGroupOpen=false})
-    showcaseFrame?.let {frame-> ShowcasePreviewDialog(frame,
-        selected=state.showcase.selected.any {it.decisionId==frame.decisionId},
-        enabled=!state.busy,
-        toggle={actions.toggleShowcaseFrame(frame)},
-        replay={actions.replayShowcaseCard(frame)},
-        close={showcaseFrame=null}) }
+    if(showcaseCardPicker) ShowcaseCardPicker(state.showcase.cards,{showcaseCardPicker=false}) {card->
+        showcaseCardPicker=false;actions.pickShowcaseCard(card)
+    }
+    if(showcaseScenePicker) ShowcaseScenePicker(state.showcase.photos,state.showcase.photosLoading,{showcaseScenePicker=false}) {photo->
+        showcaseScenePicker=false;actions.pickShowcaseScene(photo)
+    }
+    // Keyed by position, and dropped when the list shrinks under it, so removing the item being looked
+    // at closes the viewer rather than sliding it onto whatever took its place.
+    LaunchedEffect(showcaseItem,state.showcase.chosen.size) {
+        if(showcaseItem?.let {it>=state.showcase.chosen.size}==true) showcaseItem=null
+    }
+    showcaseItem?.let {index-> state.showcase.chosen.getOrNull(index)?.let {item->
+        ShowcasePreviewDialog(item,enabled=!state.busy,
+            remove={actions.removeShowcaseAt(index);showcaseItem=null},
+            replay={actions.replayShowcaseCard(item.card)},
+            close={showcaseItem=null}) } }
     if(deleteTargets.isNotEmpty()) AlertDialog(
         onDismissRequest={deleteTargets=emptyList()},
         title={Text(if(deleteTargets.size==1) "删除这条记录？" else "删除这 ${deleteTargets.size} 条记录？")},
