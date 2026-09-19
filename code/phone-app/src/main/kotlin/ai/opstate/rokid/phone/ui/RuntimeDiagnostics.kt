@@ -23,7 +23,9 @@ data class RuntimeLogEntry(val sequence: Long,val at: Long,val type: String,val 
 fun JournalEntity.toRuntimeLogEntry(): RuntimeLogEntry {
     val payload=StudyWire.json.parseToJsonElement(canonicalJson).jsonObject
     val allowed=setOf("code","status","reason","reason_codes","phase","capture_id","request_id","packet_id","anchor_id","decision_id",
-        "channel","quality_valid","model_latency_ms","decision_to_visible_ms","packet_to_visible_ms","position_ms","from_index","to_index")
+        "channel","quality_valid","model_latency_ms","decision_to_visible_ms","packet_to_visible_ms","position_ms","from_index","to_index",
+        // A deletion names the observation it retires, so the log line says which photograph went.
+        "observation_id")
     val detail=payload.filterKeys {it in allowed}.entries.joinToString("\n") {(key,value)->"$key: ${if(value is JsonPrimitive) value.content else value}"}
     return RuntimeLogEntry(sequence,eventAtEpochMs,eventType,detail)
 }

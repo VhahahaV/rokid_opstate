@@ -95,13 +95,16 @@ class MainActivity : ComponentActivity() {
             var previous=graph.studyRuntime.state.value
             graph.studyRuntime.state.collect {runtime->
             viewState.update {it.copy(runtime=runtime)}
-            if(runtime.sessionId!=previous.sessionId || runtime.liveCaptures!=previous.liveCaptures || (runtime.sessionId!=null && viewState.value.livePhotos.isEmpty() && runtime.liveCaptures>0)) {
+            // `deletedCaptures` is in here as well as `liveCaptures`: removing a photograph does not
+            // change how many were taken, and the strip still has to lose it.
+            if(runtime.sessionId!=previous.sessionId || runtime.liveCaptures!=previous.liveCaptures || runtime.deletedCaptures!=previous.deletedCaptures ||
+                (runtime.sessionId!=null && viewState.value.livePhotos.isEmpty() && runtime.liveCaptures>0)) {
                 val photos=withContext(Dispatchers.IO) {runtime.sessionId?.let {SessionReviewRepository(graph.journal).photos(it)}.orEmpty()}
                 viewState.update {it.copy(livePhotos=photos)}
             }
             if(runtime.phase=="ERROR" && runtime.error!=null) showError(IllegalStateException(runtime.error))
             if(previous.sessionId!=null && runtime.sessionId==null && previous.phase!="ERROR") message(
-                if(previous.mode==SessionMode.COLLECTION) "采集已保存：${previous.liveCaptures} 张，其中 ${previous.validCaptures} 张可用于服务历史。"
+                if(previous.mode==SessionMode.COLLECTION) "采集已保存：${previous.liveCaptures-previous.deletedCaptures} 张，其中 ${previous.validCaptures} 张可用于服务历史。"
                 else "服务会话已结束并保存。")
             previous=runtime
         }}
@@ -145,7 +148,8 @@ class MainActivity : ComponentActivity() {
                         }
                         message(if(outcome.second==0) "这次会话没有真实显示过的主动服务" else "已生成 ${outcome.second} 帧：${outcome.first.absolutePath}")
                     } },
-                    refresh={openSession(selected.session.sessionId)},dismissMessage={viewState.update {it.copy(message=null)}},logs={openLogs(selected.session.sessionId)})
+                    refresh={openSession(selected.session.sessionId)},dismissMessage={viewState.update {it.copy(message=null)}},logs={openLogs(selected.session.sessionId)},
+                    deletePhoto={observationId->deletePhoto(selected.session.sessionId,observationId)})
                 } else screenState.SaveableStateProvider("operator") { OperatorScreen(state,OperatorActions(
                 scan={ scan() },reconnect={ operate { val device=graph.link.savedDevice() ?: error("NO_SAVED_DEVICE")
                     graph.transport.connect(ai.opstate.rokid.phone.transport.RokidDevice(device.address,device.name)).getOrThrow() } },
@@ -170,6 +174,7 @@ class MainActivity : ComponentActivity() {
                 pause={operate {graph.studyRuntime.pauseSession()}},
                 syncPhotos={graph.studyRuntime.syncPhotos()},
                 renameSession={id,name->renameSession(id,name)},deleteSessions={ids->deleteSessions(ids)},mergeSessions={ids,name->mergeSessions(ids,name)},
+                deleteLivePhoto={observationId->viewState.value.runtime.sessionId?.let {sessionId->deletePhoto(sessionId,observationId)}},
                 resume={operate {graph.studyRuntime.resumeSession()}},
                 seek={position->operate {graph.studyRuntime.seekTo(position).getOrThrow()}},
                 previewHistory={index->historyPreviewJob?.cancel();historyPreviewJob=scope.launch {
@@ -331,6 +336,33 @@ class MainActivity : ComponentActivity() {
         pendingExport=withContext(Dispatchers.IO) {graph.journal.export(id)}
         createExport.launch("opstate-$id.zip")
     }
+    /**
+     * Takes one photograph out of a record, from either screen that shows one.
+     *
+     * When the record is the session running right now the actor does the removal, so the session's own
+     * view of that picture - the causal history it cites and the bytes it would attach to a request -
+     * goes at the same moment as the file, which a plain append could not reach. A finished record has
+     * no such view.
+     */
+    private fun deletePhoto(sessionId: String,observationId: String)=operate {
+        // Both entry points pass through here, so the refusal is stated once instead of trusted to each
+        // screen. The actor path below writes the journal directly, and would otherwise have let a
+        // photograph a delivered service was reading be removed from the live view.
+        val repository=SessionReviewRepository(graph.journal)
+        val photo=withContext(Dispatchers.IO) {repository.photos(sessionId).firstOrNull {it.id==observationId}}
+            ?: error("PHOTO_NOT_FOUND")
+        check(!photo.served) {"PHOTO_BACKS_DELIVERED_SERVICE"}
+        val live=graph.studyRuntime.state.value.sessionId==sessionId
+        val removed=withContext(Dispatchers.IO) {
+            if(live) graph.studyRuntime.deletePhoto(observationId).getOrThrow()
+            else repository.deletePhoto(sessionId,observationId,System.currentTimeMillis())
+        }
+        if(viewState.value.selectedSession?.session?.sessionId==sessionId) {
+            val loaded=withContext(Dispatchers.IO) {SessionReviewRepository(graph.journal).load(sessionId)}
+            viewState.update {it.copy(selectedSession=loaded,busy=false)}
+        }
+        message(if(removed) "照片已删除" else "这张照片已经不在记录里")
+    }
     private fun deleteSession(id: String)=operate {
         check(graph.studyRuntime.state.value.sessionId!=id && !(graph.datasetReplay.state.value.running && graph.datasetReplay.state.value.sessionId==id))
         withContext(Dispatchers.IO) {graph.journal.delete(id)}
@@ -364,6 +396,8 @@ class MainActivity : ComponentActivity() {
             "NO_SAVED_DEVICE" -> "尚无保存的设备，请先扫描附近眼镜。"
             "GLASSES_APP_HANDSHAKE_TIMEOUT" -> "眼镜研究应用尚未响应，请打开眼镜端 OPSTATE 应用。"
             "RECORD_IN_USE" -> "这段记录正在采集中，结束采集后才能重命名、合并或删除。"
+            "PHOTO_BACKS_DELIVERED_SERVICE" -> "这张照片是一次已投递主动服务的画面，删除后无法再生成演示帧，已保留。"
+            "PHOTO_NOT_FOUND" -> "这张照片已经不在记录里，列表已刷新。"
             "STOP_SESSION_BEFORE_MERGE" -> "只有已结束的记录才能合并。"
             "STOP_SESSION_BEFORE_DELETE" -> "这段记录还没有正常结束，先结束采集再删除。"
             "INVALID_RECORD_NAME" -> "记录名称不能为空，且不超过 80 个字。"

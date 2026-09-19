@@ -120,8 +120,12 @@ def validate(directory: Path):
             if count!=manifest.get('journal_entries') or previous!=manifest.get('audit_head_sha256'): fail('audit count/head mismatch')
             for name,iterator in streams.items():
                 if next(iterator,None) is not None: fail(f'unaudited rows in {name}')
+            # A photograph the operator removed keeps its observation row - the record still says the
+            # frame existed - but its bytes are deliberately not in the archive. The deletion is its own
+            # audited event, so the absence is explained rather than merely missing.
+            removed={row.get('observation_id') for row in lines('runtime_events.jsonl') if row.get('event')=='PHOTO_DELETED'}
             for row in obs.values():
-                if 'local_relative_path' in row:
+                if 'local_relative_path' in row and row.get('observation_id') not in removed:
                     name=row['local_relative_path']
                     if inventory.get(name,{}).get('sha256')!=row.get('sha256'): fail(f'observation image mismatch: {row["observation_id"]}')
             by_request={d.get('request_id'):d for d in decisions.values()}

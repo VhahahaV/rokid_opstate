@@ -37,7 +37,9 @@ import java.util.Locale
 
 @Composable fun SessionReviewScreen(review: SessionReview,trial: TrialReview?,busy: Boolean,message: String?,
     back: ()->Unit,openTrial: (TrialSummary)->Unit,export: ()->Unit,delete: ()->Unit,refresh: ()->Unit,dismissMessage: ()->Unit,logs: ()->Unit,
-    addContext: (String,String,String,Long)->Unit={_,_,_,_->},importContext: ()->Unit={},replayCard: (String)->Unit={},demoFrames: ()->Unit={}) {
+    addContext: (String,String,String,Long)->Unit={_,_,_,_->},importContext: ()->Unit={},replayCard: (String)->Unit={},demoFrames: ()->Unit={},
+    /** Removes one photograph from this record, by observation id. */
+    deletePhoto: (String)->Unit={}) {
     val overviewScroll=rememberLazyListState()
     val trialScroll=key(trial?.summary?.anchorId) { rememberLazyListState() }
     var filter by rememberSaveable(review.session.sessionId) { mutableStateOf("全部") }
@@ -99,6 +101,8 @@ import java.util.Locale
                 item {Panel {
                     Text(review.session.participantAlias,style=MaterialTheme.typography.headlineMedium)
                     Text("${review.photos.size} 张照片 · ${review.contexts.size} 条情境 · ${photoTime(review.session.startedAtEpochMs)}",color=Quiet)
+                    if(review.deletedPhotos>0) Text("已删除 ${review.deletedPhotos} 张 · 删除记录仍保存在原始日志里",
+                        style=MaterialTheme.typography.bodySmall,color=Quiet)
                     Text("按时间排版；情境与照片同列显示。",style=MaterialTheme.typography.bodySmall,color=Quiet)
                     Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                         Button(export,enabled=!busy && review.verified && review.phase in setOf("STOPPED","PAUSED")) {Text("导出原图与记录")}
@@ -183,7 +187,10 @@ import java.util.Locale
     }
     if(confirmDelete) AlertDialog(onDismissRequest={confirmDelete=false},title={Text("删除本地会话？")},text={Text("将删除这次会话的观察、图像、请求、响应及本地导出缓存。已另存的 ZIP 不受影响。")},
         confirmButton={TextButton(onClick={confirmDelete=false;delete()}) {Text("删除",color=MaterialTheme.colorScheme.error)}},dismissButton={TextButton(onClick={confirmDelete=false}) {Text("保留")}})
-    selectedPhoto?.let {PhotoViewer(review.photos,it,{selectedPhoto=it},{selectedPhoto=null},{anchor->replayCard(anchor)})}
+    // No deleting while the record is being read, written or exported: the reload after a deletion
+    // would race whichever of those is in flight.
+    selectedPhoto?.let {id->PhotoViewer(review.photos,id,{selectedPhoto=it},{selectedPhoto=null},
+        {anchor->replayCard(anchor)},delete=if(busy) null else {photo->deletePhoto(photo.id)})}
     if(insertOpen) SyntheticContextDialog(startedAt=review.session.startedAtEpochMs,endedAt=review.session.endedAtEpochMs,
         onConfirm={ type,title,body,at -> addContext(type,title,body,at);insertOpen=false },
         onDismiss={insertOpen=false})

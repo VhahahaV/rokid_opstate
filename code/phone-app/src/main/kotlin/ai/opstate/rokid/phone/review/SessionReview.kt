@@ -7,7 +7,10 @@ import java.io.File
 
 data class TrialSummary(val anchorId: String,val at: Long,val episode: String,val decision: String?,val title: String?,
     val evidenceCount: Int,val latencyMs: Long?,val delivery: String?)
-data class SessionReview(val session: StudySessionEntity,val phase: String,val counts: Map<String,Int>,val verified: Boolean,val trials: List<TrialSummary>,val interrupted: Boolean=false,val photos: List<CapturedPhoto> = emptyList(),val contexts: List<ContextEntry> = emptyList())
+data class SessionReview(val session: StudySessionEntity,val phase: String,val counts: Map<String,Int>,val verified: Boolean,val trials: List<TrialSummary>,val interrupted: Boolean=false,val photos: List<CapturedPhoto> = emptyList(),val contexts: List<ContextEntry> = emptyList(),
+    /** Photographs an operator took out of this record. Their rows are still in the journal, which is
+     *  why the count is worth showing: the album is smaller than the record, and this says by how much. */
+    val deletedPhotos: Int = 0)
 /** Operator-authored context shown alongside the captures it sits between in time. */
 data class ContextEntry(val id: String,val type: String,val title: String,val text: String,val occurredAt: Long)
 sealed interface TimelineItem {
@@ -63,9 +66,11 @@ class SessionReviewRepository(private val journal: StudyJournal) {
     }
     fun photos(id: String): List<CapturedPhoto> {
         val served=servedByAsset(id)
+        val removed=journal.deletedPhotoObservations(id)
         return dao.stream(id,"observations").mapNotNull {event->
             val row=event.json()
             if(row.string("kind")!="IMAGE") return@mapNotNull null
+            if(row.string("observation_id")?.let {it in removed}==true) return@mapNotNull null
             val path=row.string("local_relative_path") ?: return@mapNotNull null
             val hit=row.string("asset_id")?.let {served[it]}
             CapturedPhoto(row.string("observation_id") ?: event.sequence.toString(),journal.localImage(id,path),
@@ -99,16 +104,37 @@ class SessionReviewRepository(private val journal: StudyJournal) {
                 decision?.get("evidence_observation_ids")?.jsonArray?.size ?: 0,
                 raw[rowKey]?.get("latency_ms")?.jsonPrimitive?.longOrNull,deliveries[decision?.string("decision_id")]?.string("status"))
         }
-        return SessionReview(session,dao.checkpoint(id)?.state ?: "UNKNOWN",dao.counts(id).associate { it.stream to it.count },journal.verify(id),trials,dao.checkpoint(id)?.stateJson?.let {StudyWire.json.parseToJsonElement(it).jsonObject.string("recovery_reason")}!=null,photos(id),contexts(id))
+        return SessionReview(session,dao.checkpoint(id)?.state ?: "UNKNOWN",dao.counts(id).associate { it.stream to it.count },journal.verify(id),trials,dao.checkpoint(id)?.stateJson?.let {StudyWire.json.parseToJsonElement(it).jsonObject.string("recovery_reason")}!=null,photos(id),contexts(id),journal.deletedPhotoObservations(id).size)
     }
     fun trial(id: String,trial: TrialSummary): TrialReview {
         val request=find(id,"inference_requests",trial.anchorId)
         val raw=find(id,"raw_responses",trial.anchorId)
         val decision=find(id,"decisions",trial.anchorId)
         val asset=request?.string("current_asset_id")
-        val image=asset?.let { value -> dao.imageForAsset(id,value)?.json()?.string("local_relative_path")?.let {journal.localImage(id,it)} }
+        // The frame this trial read may have been removed since. `imageForAsset` cannot tell - a deleted
+        // observation is still a row - so the lookup asks the tombstones.
+        val removed=journal.deletedPhotoObservations(id)
+        val image=asset?.let { value -> dao.imageForAsset(id,value)?.json()
+            ?.takeIf {row->row.string("observation_id")?.let {it in removed}!=true}
+            ?.string("local_relative_path")?.let {journal.localImage(id,it)} }
         val provider=dao.eventForAnchorOfType(id,"raw_responses",trial.anchorId,"PROVIDER_RESPONSE")?.json()
         return TrialReview(trial,request,raw,decision,image,provider)
+    }
+    /**
+     * Takes one photograph out of a record.
+     *
+     * Refuses the frame a delivered service was reading. That frame is the scene half of a demo frame -
+     * the card the wearer actually saw, rendered over the picture the model was looking at - and it is
+     * the one thing this record exists to produce, so it is not recoverable by re-rendering. Everything
+     * else is the operator's to remove.
+     *
+     * The policy lives here rather than in the journal because `served` is a join across the request and
+     * decision streams that only this layer already does.
+     */
+    fun deletePhoto(id: String,observationId: String,now: Long): Boolean {
+        val photo=photos(id).firstOrNull {it.id==observationId} ?: error("PHOTO_NOT_FOUND")
+        check(!photo.served) {"PHOTO_BACKS_DELIVERED_SERVICE"}
+        return journal.deletePhoto(id,observationId,now)!=null
     }
 }
 fun JsonObject.string(key: String)=get(key)?.jsonPrimitive?.contentOrNull

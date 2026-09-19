@@ -87,12 +87,18 @@ class LocalCollectionRepository(private val journal: StudyJournal) {
         .firstOrNull {it.eventType=="SESSION_CONFIGURATION"}?.canonicalJson
         ?.let {StudyWire.json.parseToJsonElement(it).jsonObject} ?: JsonObject(emptyMap())
 
-    private fun validRows(sessionId: String): List<JsonObject> = journal.dao.stream(sessionId,"observations")
+    /** Photographs this record can still hand to a new session. A picture the operator removed is not
+     *  one of them - its bytes are gone, so seeding it would fail on the read. */
+    private fun validRows(sessionId: String): List<JsonObject> {
+        val removed=journal.deletedPhotoObservations(sessionId)
+        return journal.dao.stream(sessionId,"observations")
         .asSequence().filter {it.eventType=="OBSERVATION_PERSISTED"}
         .map {StudyWire.json.parseToJsonElement(it.canonicalJson).jsonObject}
         .filter {it["kind"]==JsonPrimitive("IMAGE") && it["quality_valid"]==JsonPrimitive(true) &&
+            it["observation_id"]?.jsonPrimitive?.contentOrNull?.let {id->id in removed}!=true &&
             it["local_relative_path"]?.jsonPrimitive?.contentOrNull!=null && it["sha256"]?.jsonPrimitive?.contentOrNull!=null}
         .toList()
+    }
 
     companion object {
         /** An upper bound on how much of a record a session will copy, not a model-input limit. */

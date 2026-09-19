@@ -71,7 +71,7 @@ internal fun photoTime(at: Long,pattern: String="MM月dd日 HH:mm:ss")=if(at>0) 
     }
 }
 
-@Composable internal fun RecentPhotos(photos: List<CapturedPhoto>) {
+@Composable internal fun RecentPhotos(photos: List<CapturedPhoto>,delete: ((CapturedPhoto)->Unit)?=null) {
     var selectedId by remember {mutableStateOf<String?>(null)}
     if(photos.isEmpty()) {
         Box(Modifier.fillMaxWidth().height(140.dp).clip(RoundedCornerShape(14.dp)).background(Canvas),contentAlignment=Alignment.Center) {
@@ -87,7 +87,7 @@ internal fun photoTime(at: Long,pattern: String="MM月dd日 HH:mm:ss")=if(at>0) 
             items(photos,key={it.id}) {photo->PhotoTile(photo,Modifier.size(84.dp)) {selectedId=photo.id}}
         }
     }
-    selectedId?.let {id->PhotoViewer(photos,id,{selectedId=it},{selectedId=null})}
+    selectedId?.let {id->PhotoViewer(photos,id,{selectedId=it},{selectedId=null},delete=delete)}
 }
 
 internal fun LazyListScope.photoGrid(photos: List<CapturedPhoto>,open: (String)->Unit) {
@@ -146,26 +146,38 @@ internal fun LazyListScope.timeline(items: List<TimelineItem>,open: (String)->Un
     }
 }
 
-@Composable internal fun PhotoViewer(photos: List<CapturedPhoto>,selectedId: String,select: (String)->Unit,close: ()->Unit,replay: (String)->Unit={}) {
-    val index=photos.indexOfFirst {it.id==selectedId}
-    val photo=photos.getOrNull(index) ?: return
-    val metadata=photo.metadata
+@Composable internal fun PhotoViewer(photos: List<CapturedPhoto>,selectedId: String,select: (String)->Unit,close: ()->Unit,
+    replay: (String)->Unit={},delete: ((CapturedPhoto)->Unit)?=null) {
+    // What has been removed in this sitting. The host reloads the record behind this dialog, and until
+    // it answers the viewer would otherwise still show - and still offer to delete - the shot the
+    // operator just took out, so the list it pages through is the record minus these.
+    var removed by remember {mutableStateOf(emptySet<String>())}
+    var pending by remember {mutableStateOf<CapturedPhoto?>(null)}
+    val visible=photos.filterNot {it.id in removed}
+    if(visible.isEmpty()) {LaunchedEffect(Unit) {close()};return}
+    val index=visible.indexOfFirst {it.id==selectedId}.takeIf {it>=0} ?: 0
+    val metadata=visible[index].metadata
     Dialog(onDismissRequest=close,properties=DialogProperties(usePlatformDefaultWidth=false)) {
         Surface(Modifier.fillMaxSize(),color=Canvas) {
             Column(Modifier.safeDrawingPadding()) {
                 // A filmstrip, not a form: the list is already newest-first, so the page you are on is the
                 // most recent and dragging left walks back in time. No prev/next buttons - they fought the
                 // gesture and made the reader translate positions into directions.
-                val pager=rememberPagerState(initialPage=index) {photos.size}
-                LaunchedEffect(pager.currentPage) {photos.getOrNull(pager.currentPage)?.let {select(it.id)}}
-                val photo=photos.getOrNull(pager.currentPage) ?: return@Column
+                val pager=rememberPagerState(initialPage=index) {visible.size}
+                LaunchedEffect(visible.size) {if(pager.currentPage>visible.lastIndex) pager.scrollToPage(visible.lastIndex)}
+                LaunchedEffect(pager.currentPage) {visible.getOrNull(pager.currentPage)?.let {select(it.id)}}
+                val photo=visible.getOrNull(pager.currentPage) ?: return@Column
                 Row(Modifier.fillMaxWidth().padding(horizontal=12.dp),verticalAlignment=Alignment.CenterVertically) {
                     TextButton(close) {Text("关闭")}
-                    Text("${pager.currentPage+1} / ${photos.size}",modifier=Modifier.weight(1f),style=MaterialTheme.typography.titleMedium)
+                    Text("${pager.currentPage+1} / ${visible.size}",modifier=Modifier.weight(1f),style=MaterialTheme.typography.titleMedium)
                     if(photo.served) Tag("主动服务",Success)
+                    // Only where deleting is something the operator may actually do: a frame that a
+                    // delivered service was reading is not offered, and says why further down instead.
+                    if(delete!=null && !photo.served) TextButton({pending=photo},contentPadding=PaddingValues(horizontal=8.dp),
+                        modifier=Modifier.testTag("photo-delete")) {Text("删除",color=MaterialTheme.colorScheme.error)}
                 }
                 HorizontalPager(state=pager,modifier=Modifier.fillMaxWidth()) { page ->
-                    PhotoPreview(photos[page],Modifier.fillMaxWidth().height(300.dp),full=true)
+                    PhotoPreview(visible[page],Modifier.fillMaxWidth().height(300.dp),full=true)
                 }
                 Text("向左拖动看更早的照片",style=MaterialTheme.typography.bodySmall,color=Quiet,
                     modifier=Modifier.padding(horizontal=20.dp,vertical=6.dp))
@@ -188,6 +200,11 @@ internal fun LazyListScope.timeline(items: List<TimelineItem>,open: (String)->Un
                     item {Column(Modifier.padding(horizontal=20.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
                         Text(photoTime(photo.capturedAt),style=MaterialTheme.typography.titleLarge)
                         Text(if(photo.historical) "导入的历史照片" else "眼镜拍摄 · 原图保存在手机",style=MaterialTheme.typography.bodySmall,color=Quiet)
+                        // The one photograph the operator cannot take away, and the reason has to be
+                        // stated where the button would have been rather than only after a refusal: this
+                        // frame is the scene half of a demo frame, and it cannot be re-rendered.
+                        if(photo.served) Text("这张照片是一次已投递主动服务的画面，删除后无法再生成演示帧，因此不能删除。",
+                            style=MaterialTheme.typography.bodySmall,color=Quiet)
                         SettingRow("手机收到时间",photoTime(photo.receivedAt))
                         SettingRow("图片尺寸","${metadata.string("width") ?: "—"} × ${metadata.string("height") ?: "—"}")
                         SettingRow("文件大小",storageSize(photo.file.length()))
@@ -232,4 +249,11 @@ internal fun LazyListScope.timeline(items: List<TimelineItem>,open: (String)->Un
             }
         }
     }
+    // A sibling of the viewer, not a child of it: nesting one dialog window inside another is a second
+    // window over a full-screen surface, and it reads as one.
+    pending?.let {target-> AlertDialog(onDismissRequest={pending=null},title={Text("删除这张照片？")},
+        text={Text("原图会从这台手机移除，无法恢复。记录里会留下一条删除记录。\n已经复制到其他记录的历史副本不受影响。")},
+        confirmButton={TextButton({removed=removed+target.id;pending=null;delete?.invoke(target)},modifier=Modifier.testTag("photo-delete-confirm")) {
+            Text("删除",color=MaterialTheme.colorScheme.error)}},
+        dismissButton={TextButton({pending=null},modifier=Modifier.testTag("photo-delete-cancel")) {Text("取消")}}) }
 }

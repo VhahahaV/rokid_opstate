@@ -22,6 +22,17 @@ class CausalContextStore {
         eventsById[event.observationId] = event
     }
 
+    /**
+     * Drops one event from the working set.
+     *
+     * This store is what a *running* session may still read, not the record itself: the journal keeps
+     * every observation it ever accepted, including a photograph an operator removed afterwards.
+     * Removing it here is what stops a later request from citing it, which is the point of removing it.
+     * Returns the dropped event, or null when it was not held.
+     */
+    @Synchronized
+    fun remove(observationId: String): ObservationRecord? = eventsById.remove(observationId)
+
     @Synchronized
     fun causalSnapshot(
         atEpochMs: Long,

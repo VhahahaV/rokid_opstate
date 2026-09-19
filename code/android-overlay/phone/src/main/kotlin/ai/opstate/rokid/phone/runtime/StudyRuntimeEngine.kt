@@ -70,6 +70,9 @@ data class RuntimeViewState(val phase: String="IDLE",val sessionId: String?=null
     val commandAckMs: Long?=null,val cameraDurationMs: Long?=null,val transferDurationMs: Long?=null,
     val shadowInference: Boolean=false,val mode: SessionMode=SessionMode.SERVICE,
     val captureIntervalMs: Long=60_000,val validCaptures: Int=0,val rejectedCaptures: Int=0,
+    /** Photographs the operator removed while this session was running. Subtracted from [liveCaptures]
+     *  wherever that number claims to be what is on the phone; it stays a monotonic capture sequence. */
+    val deletedCaptures: Int=0,
     val savedImageBytes: Long=0,val latestImageBytes: Int?=null,val storageFreeBytes: Long?=null,
     val glassesCapture: Boolean=false,val bufferedPhotos: Int=0,val glassesCaptures: Int=0,val glassesFreeBytes: Long?=null,val syncBatchSize: Int=60,val syncing: Boolean=false,
     /** Whether the running session asks the model for a service on every call. */
@@ -145,6 +148,8 @@ class StudyRuntimeEngine(
         data class EvaluatePhoto(val photo: ChosenPhoto,val reply: CompletableDeferred<Result<Unit>>): Event()
         data class EvaluateContext(val input: SyntheticContextInput,val reply: CompletableDeferred<Result<Unit>>): Event()
         data class SetForceService(val enabled: Boolean,val reply: CompletableDeferred<Result<Unit>>): Event()
+        /** One photograph the operator took out of the live record. */
+        data class DeletePhoto(val observationId: String,val reply: CompletableDeferred<Result<Boolean>>): Event()
         data class AutoCapture(val enabled: Boolean): Event()
         data class DemoMode(val enabled: Boolean): Event()
         data object Tick: Event()
@@ -170,6 +175,8 @@ class StudyRuntimeEngine(
                     is Event.EvaluatePhoto -> {chosenPhoto(chosenSession(),event.photo);event.reply.complete(Result.success(Unit))}
                     is Event.EvaluateContext -> {evaluateNow(chosenSession(),addContext(event.input));event.reply.complete(Result.success(Unit))}
                     is Event.SetForceService -> {applyForceService(event.enabled);event.reply.complete(Result.success(Unit))}
+                    is Event.DeletePhoto -> active?.let {session->event.reply.complete(runCatching {deletePhoto(session,event.observationId)})}
+                        ?: event.reply.complete(Result.failure(IllegalStateException("NO_ACTIVE_SESSION")))
                     is Event.AutoCapture -> active?.let {session->session.automaticCapture=event.enabled
                         journal.append(session.id,"runtime_events","AUTOMATIC_CAPTURE_CHANGED",StudyWire.payload("enabled" to event.enabled),System.currentTimeMillis())
                         _state.update {it.copy(automaticCapture=event.enabled)};configureGlasses(session)}
@@ -228,6 +235,17 @@ class StudyRuntimeEngine(
     /** Appends the chosen note and evaluates immediately, rather than waiting for the glasses to capture. */
     suspend fun evaluateChosenContext(input: SyntheticContextInput): Result<Unit> {
         val reply=CompletableDeferred<Result<Unit>>();inbox.send(Event.EvaluateContext(input,reply));return reply.await()
+    }
+    /**
+     * Removes one photograph from the running session.
+     *
+     * Goes through the actor rather than straight to the journal because the session also holds the
+     * picture in memory - as causal history and, for seeded frames, as the bytes a request would send -
+     * and every one of those has to stop offering it before the deletion is true. Returns false when
+     * the photo was already gone.
+     */
+    suspend fun deletePhoto(observationId: String): Result<Boolean> {
+        val reply=CompletableDeferred<Result<Boolean>>();inbox.send(Event.DeletePhoto(observationId,reply));return reply.await()
     }
     /** Turns the forced-service prompt on or off for the running session. */
     suspend fun setForceService(enabled: Boolean): Result<Unit> {
@@ -881,6 +899,37 @@ class StudyRuntimeEngine(
             photo.width,photo.height,photo.rotationDegrees,sha,"CHOSEN_SOURCE",buffered=true,
             sourceMetadata=StudyWire.payload("trigger_types" to JsonArray(listOf(JsonPrimitive("MANUAL")))))
         image(session,frame)
+    }
+    /**
+     * Takes one photograph out of the running session: the journal keeps the event, the bytes go, and
+     * the session forgets it everywhere it was still readable.
+     *
+     * A request already sitting in the queue keeps the copy it was built with. That window is the few
+     * seconds between a packet being recorded and the model answering, and cancelling it would throw
+     * away work for a frame that has, at that point, already been sent.
+     */
+    private fun deletePhoto(session: Session,observationId: String): Boolean {
+        val payload=journal.deletePhoto(session.id,observationId,System.currentTimeMillis()) ?: return false
+        // The two places a live session can still reach an old frame: the causal history it cites and
+        // the bytes it would attach for a seeded frame. Both are keyed differently, so both are cleared.
+        session.history.remove(observationId)?.assetId?.let {session.historicalImages.remove(it)}
+        // If this was the frame the next packet would have been built around, drop it: `recordPackets`
+        // returns early on a null latestFrame, so no packet can be assembled from a photograph that is
+        // no longer there even though the packetizer still remembers it.
+        if(observationId=="obs-${session.latestFrame?.captureId}") {session.latestFrame=null;session.latestQuality=null}
+        val valid=payload["quality_valid"]?.jsonPrimitive?.booleanOrNull==true
+        val bytes=payload["byte_length"]?.jsonPrimitive?.longOrNull ?: 0L
+        val fileName=payload["local_relative_path"]?.jsonPrimitive?.contentOrNull?.substringAfterLast('/')
+        session.observationCount=(session.observationCount-1).coerceAtLeast(0)
+        _state.update {state->state.copy(deletedCaptures=state.deletedCaptures+1,observations=session.observationCount,
+            validCaptures=(state.validCaptures-if(valid) 1 else 0).coerceAtLeast(0),
+            rejectedCaptures=(state.rejectedCaptures-if(valid) 0 else 1).coerceAtLeast(0),
+            savedImageBytes=(state.savedImageBytes-bytes).coerceAtLeast(0),
+            // `liveCaptures` is a capture *sequence* - it numbers the next shot and is what the tests
+            // read - so it stays monotonic and the count of photographs on the phone is derived from it.
+            latestImagePath=state.latestImagePath?.takeIf {fileName==null || it.substringAfterLast('/')!=fileName},
+            observationStatus="IMAGE_DELETED")}
+        return true
     }
     /** Evaluates now on the most recent frame, with a freshly added note as the new evidence. */
     private fun evaluateNow(session: Session,observation: ObservationRecord) {

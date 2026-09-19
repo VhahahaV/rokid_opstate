@@ -30,7 +30,7 @@ import ai.opstate.rokid.phone.runtime.SessionMode
     val runtime=state.runtime
     val nextCapture=runtime.nextCaptureInMs
     Text(if(runtime.mode==SessionMode.COLLECTION) "最近的照片" else "实时观察与情境",style=MaterialTheme.typography.titleMedium)
-    RecentPhotos(state.livePhotos)
+    RecentPhotos(state.livePhotos) {photo->actions.deleteLivePhoto(photo.id)}
     Row(verticalAlignment=Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             if(runtime.mode==SessionMode.SERVICE) Text("每分钟自动拍照",style=MaterialTheme.typography.titleMedium)
@@ -91,6 +91,7 @@ import ai.opstate.rokid.phone.runtime.SessionMode
             "IMAGE_TOO_DARK","IMAGE_TOO_BRIGHT","IMAGE_TOO_BLURRY","IMAGE_CORRUPTED"->sessionError(status)
             "COLLECTION_STORAGE_LOW"->sessionError(status)
             "IMAGE_SAVED"->"第 ${runtime.liveCaptures} 张保存完成 · 往返 ${runtime.captureRoundTripMs ?: 0} ms"
+            "IMAGE_DELETED"->"照片已删除 · 本次采集已移除 ${runtime.deletedCaptures} 张"
             "EVALUATING","PACKET_QUEUED"->"在线检测已触发，观察包进入评估"
             "MOTION_HIGH"->"照片已保存，等待眼镜稳定后评估"
             "RECENT_INTERACTION","DISPLAY_BUSY"->"照片已保存，等待本次交互结束"

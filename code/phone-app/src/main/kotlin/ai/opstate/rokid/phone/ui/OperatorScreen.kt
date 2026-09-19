@@ -83,6 +83,8 @@ data class OperatorActions(
     val openLogs: (String)->Unit,
     val loadHistory: (String?,Int?,Int,()->Unit)->Unit,val clearHistory: ()->Unit,
     val syncPhotos: ()->Unit={},
+    /** Takes one photograph out of the session that is running right now, by observation id. */
+    val deleteLivePhoto: (String)->Unit={},
     val renameSession: (String,String)->Unit={_,_->},
     val deleteSessions: (List<String>)->Unit={},
     val mergeSessions: (List<String>,String)->Unit={_,_->},
@@ -294,7 +296,9 @@ data class OperatorActions(
                 Tag(if(runtime.phase=="PAUSED") "已暂停" else if(!state.peerReady) "眼镜本地采集" else "进行中",if(state.peerReady) Success else Amber)
             }
             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween) {
-                Text("${runtime.liveCaptures} 张",fontSize=32.sp,fontWeight=FontWeight.Bold)
+                // `liveCaptures` counts shots taken, which is what numbers the next one; what is on the
+                // phone is that minus whatever the operator has taken out since.
+                Text("${runtime.liveCaptures-runtime.deletedCaptures} 张",fontSize=32.sp,fontWeight=FontWeight.Bold)
                 Column(horizontalAlignment=Alignment.End) {
                     Text("手机已保存 · 眼镜待同步 ${runtime.bufferedPhotos} 张",color=Quiet,style=MaterialTheme.typography.bodySmall)
                     Text("${playbackTime(runtime.elapsedMs)} · 每 ${runtime.captureIntervalMs/1000} 秒",color=Quiet,style=MaterialTheme.typography.bodySmall)

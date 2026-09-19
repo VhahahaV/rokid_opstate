@@ -136,6 +136,10 @@ class StudyJournal(private val context: Context,val database: StudyDatabase) {
         require(snapshot.checkpoint?.state in setOf("STOPPED","PAUSED")) { "PAUSE_OR_STOP_BEFORE_EXPORT" }
         val frozen=snapshot.checkpoint?.stateJson?.let { StudyWire.json.parseToJsonElement(it).jsonObject } ?: JsonObject(emptyMap())
         val contract=frozen["contract"]?.jsonObject ?: error("SESSION_CONTRACT_NOT_RECORDED")
+        // A photograph the operator removed keeps its row in observations.jsonl - the record still says
+        // the frame existed - but its bytes are deliberately not in the archive. The tombstone row in
+        // runtime_events.jsonl is what says why the file is absent, and what the trace validator reads.
+        val removed=deletedPhotoObservations(id)
         val directory=File(context.cacheDir,"exports/$id-${UUID.randomUUID()}").apply { mkdirs() }
         val archive=File(directory.parentFile,"${directory.name}.zip")
         val writers=streams.associateWith { File(directory,"$it.jsonl").bufferedWriter() }
@@ -152,7 +156,7 @@ class StudyJournal(private val context: Context,val database: StudyDatabase) {
                     if(row.stream=="observations") {
                         val data=StudyWire.json.parseToJsonElement(row.canonicalJson).jsonObject
                         val path=data["local_relative_path"]?.jsonPrimitive?.contentOrNull
-                        if(path!=null && seen.add(path)) {
+                        if(path!=null && data["observation_id"]?.jsonPrimitive?.contentOrNull !in removed && seen.add(path)) {
                             val source=localImage(id,path)
                             check(source.isFile && hashFile(source)==data.getValue("sha256").jsonPrimitive.content) { "EXPORT_IMAGE_HASH_MISMATCH" }
                             val target=File(directory,path);target.parentFile!!.mkdirs();source.copyTo(target)
@@ -224,6 +228,65 @@ class StudyJournal(private val context: Context,val database: StudyDatabase) {
                 "source" to "OPERATOR_SYNTHETIC"),atEpochMs)
         }
         return eventId
+    }
+
+    /**
+     * The photographs an operator has taken out of this record. The journal still holds them and the
+     * chain still verifies; this is the set every reader subtracts, because their bytes are gone.
+     */
+    fun deletedPhotoObservations(id: String): Set<String> = dao.photoDeletions(id).mapNotNull {event->
+        StudyWire.json.parseToJsonElement(event.canonicalJson).jsonObject["observation_id"]?.jsonPrimitive?.contentOrNull
+    }.toSet()
+
+    /**
+     * Removes one photograph, without removing anything from the journal.
+     *
+     * The chain is append-only and covers every row including the observation that describes the
+     * image, so a deletion is written as a new event naming the observation it retires instead of by
+     * taking that row out. The record then still says the frame existed and that an operator took it
+     * away, [verify] keeps passing and [export] keeps working. That is the honest shape for a study
+     * record: what changed is not the history, it is which material is still on the phone.
+     *
+     * The bytes are unlinked second, so a failure between the two leaves an orphan file the readers
+     * already ignore, rather than a journal promising a file the disk does not have.
+     *
+     * Returns the tombstone payload, or null when the photo is unknown or was already deleted, so a
+     * second tap appends nothing.
+     */
+    @Synchronized fun deletePhoto(id: String,observationId: String,now: Long): JsonObject? {
+        val session=requireNotNull(dao.session(id)) {"UNKNOWN_SESSION"}
+        val removed=deletedPhotoObservations(id)
+        if(observationId in removed) return null
+        // The observation row is the authority on what this photograph was - its asset, its length and
+        // where the bytes live all come from it, never from the caller, so a stale caller cannot point
+        // the deletion at the wrong file. Read once: a long record's observations are not cheap to
+        // parse, and this runs while the operator waits.
+        val observations=dao.stream(id,"observations").map {StudyWire.json.parseToJsonElement(it.canonicalJson).jsonObject}
+        fun observationIdOf(row: JsonObject)=row["observation_id"]?.jsonPrimitive?.contentOrNull
+        val row=observations.firstOrNull {observationIdOf(it)==observationId && it["kind"]==JsonPrimitive("IMAGE")} ?: return null
+        val path=row["local_relative_path"]?.jsonPrimitive?.contentOrNull ?: return null
+        val payload=StudyWire.payload(
+            // `event` is redundant with the journal column, and it is here on purpose: an export writes
+            // payloads only, so without it the archived trace could not say which rows are deletions.
+            "event" to "PHOTO_DELETED","observation_id" to observationId,
+            "asset_id" to row["asset_id"]?.jsonPrimitive?.contentOrNull,
+            "local_relative_path" to path,"sha256" to row["sha256"]?.jsonPrimitive?.contentOrNull,
+            "byte_length" to row["byte_length"]?.jsonPrimitive?.intOrNull,
+            "quality_valid" to row["quality_valid"]?.jsonPrimitive?.booleanOrNull,
+            "occurred_at_epoch_ms" to row["occurred_at_epoch_ms"]?.jsonPrimitive?.longOrNull,
+            "available_at_epoch_ms" to row["available_at_epoch_ms"]?.jsonPrimitive?.longOrNull,
+            "deleted_at_epoch_ms" to now,"deleted_during_session" to (session.endedAtEpochMs==null),
+            "source" to "OPERATOR_DELETE")
+        database.runInTransaction {append(id,"runtime_events","PHOTO_DELETED",payload,now)}
+        // Only when nothing live still points at the same file. Two observations can share one capture
+        // id - an imported history frame and the record it came from are the same bytes - and then one
+        // file backs both of them.
+        val shared=observations.any {
+            it["local_relative_path"]?.jsonPrimitive?.contentOrNull==path &&
+                observationIdOf(it)?.let {other->other!=observationId && other !in removed}==true
+        }
+        if(!shared) runCatching {localImage(id,path).delete()}
+        return payload
     }
 
     /** The name a record is listed under is `participantAlias`; the audit chain stores no alias, so
