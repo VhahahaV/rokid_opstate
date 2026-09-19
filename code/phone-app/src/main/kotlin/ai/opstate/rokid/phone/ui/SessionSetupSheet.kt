@@ -25,13 +25,13 @@ import java.util.Locale
 
 /** How many of a record's captures to use as history; 0 means all of them. */
 internal const val PARTIAL_HISTORY=4
-data class SessionLaunchOptions(val alias: String,val scenarioPositionMs: Long=0,val historyIndex: Int?=null,val demoMode: Boolean=true,val shadowInference: Boolean=false,
+data class SessionLaunchOptions(val alias: String,val scenarioPositionMs: Long=0,val demoMode: Boolean=true,val shadowInference: Boolean=false,
     val profile: String="BENCHMARK_ALIGNED",val mode: SessionMode=SessionMode.SERVICE,val captureIntervalMs: Long=60_000,
     val collectionHistorySessionId: String?=null,val collectionHistoryImageLimit: Int=0,val syncBatchSize: Int=60,
     /** Demo: always ask the model for a service, so a tap reliably produces something to show. */
     val forceService: Boolean=false)
 
-data class ImportedHistory(val sourceSessionId: String?=null,val publicIndex: Int?=null,val imageLimit: Int=0,
+data class ImportedHistory(val sourceSessionId: String,val imageLimit: Int=0,
     val title: String,val images: Int,val contexts: Int,val recent: List<String> = emptyList())
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -80,7 +80,7 @@ data class ImportedHistory(val sourceSessionId: String?=null,val publicIndex: In
         PrimaryButton(if(preparing) "正在准备…" else if(!state.peerReady) "连接眼镜" else if(mode==SessionMode.COLLECTION) "开始采集" else "开始在线服务",canStart) {
             if(!state.peerReady) connect() else actions.start(SessionLaunchOptions(
                 alias=alias.ifBlank {SimpleDateFormat("MM-dd HH:mm",Locale.CHINA).format(Date())},mode=mode,captureIntervalMs=interval,syncBatchSize=batch.toInt(),
-                demoMode=false,historyIndex=history?.publicIndex,collectionHistorySessionId=history?.sourceSessionId,
+                demoMode=false,collectionHistorySessionId=history?.sourceSessionId,
                 collectionHistoryImageLimit=history?.imageLimit ?: 0))
         }
         state.runtime.error?.let {Text(sessionError(it),color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)}
@@ -89,54 +89,37 @@ data class ImportedHistory(val sourceSessionId: String?=null,val publicIndex: In
 
 @OptIn(ExperimentalMaterial3Api::class,ExperimentalLayoutApi::class)
 @Composable internal fun HistoryImportSheet(state: OperatorViewState,actions: OperatorActions,onDismiss: ()->Unit) {
-    var source by rememberSaveable {mutableStateOf(if(state.collections.isEmpty()) "R6" else "LOCAL")}
     var selectedId by rememberSaveable {mutableStateOf(state.collections.firstOrNull()?.sessionId)}
     // 0 seeds the session with the whole record; the model request still sends only the last four frames.
     var limit by rememberSaveable {mutableIntStateOf(0)}
-    var index by rememberSaveable {mutableIntStateOf(0)}
     val selected=state.collections.firstOrNull {it.sessionId==selectedId}
-    LaunchedEffect(source,index) {if(source=="R6" && state.dataset!=null) actions.previewHistory(index)}
     ModalBottomSheet(onDismissRequest=onDismiss,sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true),containerColor=Canvas) {
         Column(Modifier.fillMaxHeight(0.88f).padding(horizontal=24.dp)) {
             Text("导入历史",style=MaterialTheme.typography.headlineMedium)
             Text("仅加载图片与合成数据，完成后再选择运行模式。",color=Quiet,style=MaterialTheme.typography.bodyMedium)
-            Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                FilterChip(source=="LOCAL",{source="LOCAL"},label={Text("手机记录")})
-                FilterChip(source=="R6",{source="R6"},label={Text("内置历史数据")})
-            }
             LazyColumn(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(12.dp)) {
-                if(source=="LOCAL") {
-                    if(state.collections.isEmpty()) item {Text("还没有可导入的记录，请先完成一次采集。",color=Quiet)}
-                    state.collections.forEach {entry->item {
-                        FilterChip(selectedId==entry.sessionId,{selectedId=entry.sessionId},label={Column {
-                            Text(entry.participantAlias)
-                            Text("${SimpleDateFormat("MM-dd HH:mm",Locale.CHINA).format(Date(entry.startedAtEpochMs))} · ${entry.validImages} 张图片 · ${entry.contextCount} 条合成数据",style=MaterialTheme.typography.bodySmall)
-                        }},modifier=Modifier.fillMaxWidth())
-                    }}
-                    if(selected!=null) item {
-                        Text("作为历史的范围",style=MaterialTheme.typography.titleMedium)
-                        FlowRow(horizontalArrangement=Arrangement.spacedBy(6.dp)) {
-                            FilterChip(limit<=0,{limit=0},label={Text("整条记录 · ${selected.validImages} 张")})
-                            FilterChip(limit==PARTIAL_HISTORY,{limit=PARTIAL_HISTORY},label={Text("最近 $PARTIAL_HISTORY 张")})
-                        }
-                        Text("所选记录的全部图片与合成数据都会载入历史；模型每次请求仍只发送最近 4 张画面。",style=MaterialTheme.typography.bodySmall,color=Quiet)
+                // One source, and it is the phone's own records. There used to be a second - the built-in
+                // R6 replay dataset - which on this machine had no data behind it at all, so choosing it
+                // offered a slider and a button that could not be pressed. A choice whose only outcome is
+                // a dead end is worse than no choice.
+                if(state.collections.isEmpty()) item {Text("还没有可导入的记录，请先完成一次采集。",color=Quiet)}
+                state.collections.forEach {entry->item {
+                    FilterChip(selectedId==entry.sessionId,{selectedId=entry.sessionId},label={Column {
+                        Text(entry.participantAlias)
+                        Text("${SimpleDateFormat("MM-dd HH:mm",Locale.CHINA).format(Date(entry.startedAtEpochMs))} · ${entry.validImages} 张图片 · ${entry.contextCount} 条合成数据",style=MaterialTheme.typography.bodySmall)
+                    }},modifier=Modifier.fillMaxWidth())
+                }}
+                if(selected!=null) item {
+                    Text("作为历史的范围",style=MaterialTheme.typography.titleMedium)
+                    FlowRow(horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                        FilterChip(limit<=0,{limit=0},label={Text("整条记录 · ${selected.validImages} 张")})
+                        FilterChip(limit==PARTIAL_HISTORY,{limit=PARTIAL_HISTORY},label={Text("最近 $PARTIAL_HISTORY 张")})
                     }
-                } else {
-                    item {
-                        Text("选择历史截止位置",style=MaterialTheme.typography.titleMedium)
-                        val total=state.dataset?.anchors ?: 1
-                        Slider(index.toFloat(),{index=it.toInt()},valueRange=0f..(total-1).coerceAtLeast(1).toFloat(),enabled=state.dataset!=null)
-                        Text("${index+1} / $total",color=Quiet)
-                    }
-                    state.historyPreview?.takeIf {it.index==index}?.let {preview->item {Panel {
-                        Text(preview.sourceTime.replace("T"," ").removeSuffix("Z"))
-                        Text("${preview.observationCount} 条历史，图片加载最近 4 张",color=Quiet)
-                        preview.recent.forEach {Text(it,style=MaterialTheme.typography.bodySmall,maxLines=4)}
-                    }}}
+                    Text("所选记录的全部图片与合成数据都会载入历史；模型每次请求仍只发送最近 4 张画面。",style=MaterialTheme.typography.bodySmall,color=Quiet)
                 }
             }
-            PrimaryButton(if(state.busy) "正在加载…" else "加载为历史",!state.busy && (if(source=="LOCAL") selected!=null else state.dataset!=null)) {
-                actions.loadHistory(if(source=="LOCAL") selectedId else null,if(source=="R6") index else null,limit,onDismiss)
+            PrimaryButton(if(state.busy) "正在加载…" else "加载为历史",!state.busy && selected!=null) {
+                selected?.let {actions.loadHistory(it.sessionId,limit,onDismiss)}
             }
             Spacer(Modifier.height(28.dp))
         }

@@ -3,11 +3,13 @@ package ai.opstate.rokid.phone
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import ai.opstate.rokid.phone.replay.LocalCollectionRepository
 import ai.opstate.rokid.phone.review.SessionReviewRepository
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.junit.Assert.*
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -17,12 +19,23 @@ import org.junit.runner.RunWith
 class HistoryGalleryUiDeviceTest {
     @get:Rule val compose=createAndroidComposeRule<MainActivity>()
     private val graph get()=compose.activity.application as PhoneApplication
-    @Test fun loadingPublicHistoryLeavesRuntimeIdleAndCreatesNoSession()=runBlocking<Unit> {
+    /**
+     * Loading history is a selection, not a session. It must not start the runtime, must not create a
+     * record, and must not be mistaken for one of the modes - the operator picks a mode afterwards.
+     */
+    @Test fun loadingAHistoryLeavesRuntimeIdleAndCreatesNoSession()=runBlocking<Unit> {
         graph.storageReady.await()
+        val collections=withContext(Dispatchers.IO) {LocalCollectionRepository(graph.journal).list()}
+        assumeTrue("no record on this device to load as history",collections.isNotEmpty())
         val before=withContext(Dispatchers.IO) {graph.database.dao().sessions().size}
+        // The selection outlives the process by design, so start from none whatever an earlier run left.
+        if(compose.onAllNodesWithText("清除已加载历史").fetchSemanticsNodes().isNotEmpty())
+            compose.onNodeWithText("清除已加载历史").performClick()
         compose.onNodeWithText("导入历史").performClick()
-        compose.onNodeWithText("内置历史数据").performClick()
-        compose.waitUntil(10_000) {compose.onAllNodesWithText("加载为历史").fetchSemanticsNodes().isNotEmpty()}
+        // The sheet offers the phone's own records and nothing else; there is no second source to
+        // choose between, so the first thing to do is pick one.
+        compose.waitUntil(10_000) {compose.onAllNodesWithText(collections.first().participantAlias).fetchSemanticsNodes().isNotEmpty()}
+        compose.onNodeWithText(collections.first().participantAlias).performClick()
         compose.onNodeWithText("加载为历史").performClick()
         compose.waitUntil(10_000) {compose.onAllNodesWithText("更换历史").fetchSemanticsNodes().isNotEmpty()}
         assertNull(graph.studyRuntime.state.value.sessionId)

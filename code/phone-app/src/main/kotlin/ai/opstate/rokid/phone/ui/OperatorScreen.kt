@@ -38,7 +38,6 @@ import ai.opstate.rokid.phone.runtime.SessionMode
 import ai.opstate.rokid.phone.runtime.FrozenHarnessContract
 import ai.opstate.rokid.phone.runtime.DirectModelConfig
 import ai.opstate.rokid.phone.scenario.ScenarioTimeline
-import ai.opstate.rokid.phone.replay.HistoryPreview
 import ai.opstate.rokid.phone.replay.LocalCollectionSummary
 import ai.opstate.rokid.phone.runtime.SyntheticContextInput
 import ai.opstate.rokid.phone.review.SessionReview
@@ -52,7 +51,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-data class DatasetSummary(val title: String,val anchors: Int,val observations: Int,val images: Int,val hash: String)
 
 /**
  * The two kinds of record, named once. A collection holds photographs and notes and nothing else; a
@@ -67,7 +65,7 @@ data class OperatorViewState(
     val link: CxrLinkState=CxrLinkState(),val peerReady: Boolean=false,val busy: Boolean=false,
     val endpoint: String="http://127.0.0.1:8765",val harnessStatus: String="未检查",
     val secretPresent: Boolean=false,val licensePresent: Boolean=false,
-    val sessions: List<StudySessionEntity> = emptyList(),val collections: List<LocalCollectionSummary> = emptyList(),val dataset: DatasetSummary?=null,
+    val sessions: List<StudySessionEntity> = emptyList(),val collections: List<LocalCollectionSummary> = emptyList(),
     val message: String?=null,
     val selectedSession: SessionReview?=null,val selectedTrial: TrialReview?=null,
     val runtime: RuntimeViewState=RuntimeViewState(),
@@ -78,7 +76,7 @@ data class OperatorViewState(
     val expectedModelId: String="",val harnessTokenPresent: Boolean=false,val modelContract: FrozenHarnessContract?=null,
     val directModel: DirectModelConfig=DirectModelConfig.qwen(),val modelKeyPresent: Boolean=false,val modelApiStatus: String="尚未验证",
     val scenarioTimeline: ScenarioTimeline=ScenarioTimeline(720000,emptyList()),
-    val historyPreview: HistoryPreview?=null,val importedHistory: ImportedHistory?=null,
+    val importedHistory: ImportedHistory?=null,
     val logSessionId: String?=null,val runtimeLogs: List<RuntimeLogEntry> = emptyList(),
     val showcase: ShowcaseState=ShowcaseState(),
 )
@@ -90,12 +88,12 @@ data class OperatorActions(
     val openSession: (StudySessionEntity)->Unit,val dismissMessage: ()->Unit,
     val startReplay: (Int)->Unit,val stopReplay: ()->Unit,val openSessionId: (String)->Unit,
     val start: (SessionLaunchOptions)->Unit,val pause: ()->Unit,val resume: ()->Unit,val stop: ()->Unit,val capture: ()->Unit,val seek: (Long)->Unit,
-    val previewHistory: (Int)->Unit,val seekHistory: (Int)->Unit,val automaticCapture: (Boolean)->Unit,val demoMode: (Boolean)->Unit,
+    val automaticCapture: (Boolean)->Unit,val demoMode: (Boolean)->Unit,
     val addContext: (SyntheticContextInput,()->Unit)->Unit,
     /** Run the chain on evidence the operator picks instead of on a fresh capture. */
     val pickPhoto: ()->Unit={},val pickContext: ()->Unit={},val forceService: (Boolean)->Unit={},
     val openLogs: (String)->Unit,
-    val loadHistory: (String?,Int?,Int,()->Unit)->Unit,val clearHistory: ()->Unit,
+    val loadHistory: (String,Int,()->Unit)->Unit,val clearHistory: ()->Unit,
     val syncPhotos: ()->Unit={},
     /** Takes one photograph out of the session that is running right now, by observation id. */
     val deleteLivePhoto: (String)->Unit={},
@@ -407,15 +405,6 @@ data class OperatorActions(
         }
         runtime.currentContext?.let {Text("当前情境 · ${contextLabel(it)}",style=MaterialTheme.typography.bodyMedium)}
         Text("拖动会保存当前片段，从选定位置重新开始。暂停时停止情境播放与采集，现实时间继续。",style=MaterialTheme.typography.bodySmall,color=Quiet)
-    } else if(runtime.historyPreview!=null) key(runtime.sessionId) {
-        val preview=requireNotNull(runtime.historyPreview)
-        var draft by remember {mutableStateOf<Float?>(null)}
-        Text("历史位置 ${((draft ?: preview.index.toFloat()).toInt()+1)} / ${preview.total}",fontFamily=FontFamily.Monospace,color=Quiet)
-        Slider(draft ?: preview.index.toFloat(),{draft=it},onValueChangeFinished={draft?.let {actions.seekHistory(it.toInt())};draft=null},
-            enabled=!state.busy && state.peerReady,valueRange=0f..(preview.total-1).coerceAtLeast(1).toFloat(),modifier=Modifier.fillMaxWidth().testTag("live-history-progress"),
-            colors=SliderDefaults.colors(thumbColor=Ink,activeTrackColor=Success,inactiveTrackColor=Line))
-        Text("${preview.observationCount} 条历史已载入 · ${preview.sourceTime.take(16).replace("T"," ")}",style=MaterialTheme.typography.bodySmall,color=Quiet)
-        Text("拖动会保存当前记录，建立新的历史续接片段。",style=MaterialTheme.typography.bodySmall,color=Quiet)
     } else Text(if(runtime.mode==SessionMode.COLLECTION) "已持续 ${playbackTime(runtime.elapsedMs)} · 间隔 ${runtime.captureIntervalMs/1000} 秒" else "场景时间 ${playbackTime(runtime.elapsedMs)}",
         fontFamily=FontFamily.Monospace,color=Quiet)
     if(!runtime.replayEnabled) Row(horizontalArrangement=Arrangement.spacedBy(10.dp)) {

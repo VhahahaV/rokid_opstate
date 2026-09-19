@@ -12,9 +12,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import ai.opstate.rokid.phone.review.*
 import ai.opstate.rokid.phone.replay.DatasetReplayService
-import ai.opstate.rokid.phone.replay.preview
-import ai.opstate.rokid.phone.replay.continuation
-import ai.opstate.core.model.ObservationKind
 import ai.opstate.rokid.phone.replay.LocalCollectionRepository
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.*
@@ -50,7 +47,7 @@ class MainActivity : ComponentActivity() {
     private val graph get()=application as PhoneApplication
     private val viewState=MutableStateFlow(OperatorViewState())
     private var pendingExport: File?=null
-    private var historyPreviewJob: Job?=null
+
     private val createExport=registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
         val archive=pendingExport;pendingExport=null
         if(uri==null) archive?.delete()
@@ -111,7 +108,7 @@ class MainActivity : ComponentActivity() {
             previous=runtime
         }}
         scope.launch {graph.datasetReplay.state.collect {replay->viewState.update {it.copy(replay=replay)}}}
-        scope.launch { refreshCredentials(); loadDataset()
+        scope.launch { refreshCredentials()
             val scenario=withContext(Dispatchers.IO) {StudyWire.json.decodeFromString(StudyScenarioDto.serializer(),assets.open("scenarios/meeting-move.json").bufferedReader().use {it.readText()})}
             viewState.update {it.copy(scenarioTimeline=scenario.timeline())}
         }
@@ -160,7 +157,7 @@ class MainActivity : ComponentActivity() {
                         profile=options.profile,expectedModelId=viewState.value.directModel.modelId.takeIf {options.mode==SessionMode.SERVICE},
                         directModel=viewState.value.directModel.takeIf {options.mode==SessionMode.SERVICE},
                         scenarioAsset="",replayEnabled=false,startLiveAfterHistory=true,glassesCapture=true,syncBatchSize=options.syncBatchSize,
-                        initialPositionMs=options.scenarioPositionMs,historyAnchorIndex=options.historyIndex,glassesDemoMode=options.demoMode,
+                        initialPositionMs=options.scenarioPositionMs,glassesDemoMode=options.demoMode,
                         shadowInference=options.shadowInference,mode=options.mode,captureIntervalMs=options.captureIntervalMs,forceService=options.forceService,
                         collectionHistorySessionId=options.collectionHistorySessionId,collectionHistoryImageLimit=options.collectionHistoryImageLimit))))}},
                 pause={operate {graph.studyRuntime.pauseSession()}},
@@ -177,11 +174,6 @@ class MainActivity : ComponentActivity() {
                 replayShowcaseCard={replayServiceCard(it.sessionId,it.anchorId)},
                 resume={operate {graph.studyRuntime.resumeSession()}},
                 seek={position->operate {graph.studyRuntime.seekTo(position).getOrThrow()}},
-                previewHistory={index->historyPreviewJob?.cancel();historyPreviewJob=scope.launch {
-                    try {val preview=withContext(Dispatchers.IO) {graph.publicReplayDataset.preview(index)}
-                        viewState.update {it.copy(historyPreview=preview)}} catch(cancelled: CancellationException) {throw cancelled} catch(error: Exception) {showError(error)}
-                }},
-                seekHistory={index->operate {graph.studyRuntime.seekHistoryTo(index).getOrThrow()}},
                 automaticCapture=graph.studyRuntime::setAutomaticCapture,demoMode=graph.studyRuntime::setGlassesDemoMode,
                 addContext={input,done->operate {graph.studyRuntime.addSyntheticContext(input).getOrThrow();message("合成情境已加入，后续评估将使用这条信息");done()}},
                 forceService={enabled->operate {graph.studyRuntime.setForceService(enabled).getOrThrow();
@@ -203,30 +195,21 @@ class MainActivity : ComponentActivity() {
                 openSessionId=::openSession,
                 openLogs=::openLogs,
                 clearHistory={viewState.update {it.copy(importedHistory=null)};graph.settings.edit().remove("history_source_session_id").apply()},
-                loadHistory={sessionId,index,limit,done->operate {
+                loadHistory={sessionId,limit,done->operate {
                     check(graph.studyRuntime.state.value.sessionId==null) {"SESSION_ALREADY_ACTIVE"}
                     val imported=withContext(Dispatchers.IO) {
-                        if(sessionId!=null) {
-                            val seed=LocalCollectionRepository(graph.journal).load(sessionId,limit)
-                            ImportedHistory(sourceSessionId=sessionId,imageLimit=limit,title=seed.summary.participantAlias,
-                                images=seed.images.size,contexts=seed.contexts.size,recent=seed.contexts.takeLast(3).map {it.content})
-                        } else {
-                            val seed=graph.publicReplayDataset.continuation(requireNotNull(index),System.currentTimeMillis())
-                            val images=seed.observations.filter {it.kind==ObservationKind.IMAGE && it.assetId?.let(graph.publicReplayDataset::hasImage)==true}.takeLast(4)
-                            images.forEach {graph.publicReplayDataset.image(requireNotNull(it.assetId))}
-                            ImportedHistory(publicIndex=index,title="内置历史 · ${seed.preview.sourceTime.take(16).replace("T"," ")}",
-                                images=images.size,contexts=seed.observations.count {it.kind==ObservationKind.SYNTHETIC_CONTEXT},recent=seed.preview.recent)
-                        }
+                        val seed=LocalCollectionRepository(graph.journal).load(sessionId,limit)
+                        ImportedHistory(sourceSessionId=sessionId,imageLimit=limit,title=seed.summary.participantAlias,
+                            images=seed.images.size,contexts=seed.contexts.size,recent=seed.contexts.takeLast(3).map {it.content})
                     }
                     viewState.update {it.copy(importedHistory=imported)}
                     // The selection has to outlive this process. It was in memory only, so any restart
                     // silently turned a history-continuation session into a live-only one, and the model
                     // got historical photographs with none of the notes that make a service worth showing.
                     // Only the reference is stored; the images are loaded from the journal at session start.
-                    if(sessionId!=null) graph.settings.edit().putString("history_source_session_id",sessionId)
+                    graph.settings.edit().putString("history_source_session_id",sessionId)
                         .putInt("history_image_limit",limit).putString("history_title",imported.title)
                         .putInt("history_images",imported.images).putInt("history_contexts",imported.contexts).apply()
-                    else graph.settings.edit().remove("history_source_session_id").apply()
                     message("历史已加载，请选择采集或在线服务")
                     done()
                 }},
@@ -531,19 +514,6 @@ class MainActivity : ComponentActivity() {
         val modelKeyPresent=withContext(Dispatchers.IO) {graph.credentials.modelApiKey(viewState.value.directModel.credentialScope()).isNotBlank()}
         viewState.update {it.copy(harnessTokenPresent=harnessTokenPresent,modelKeyPresent=modelKeyPresent)}
         presence.onSuccess { (secret,license)->viewState.update {it.copy(secretPresent=secret,licensePresent=license)} }.onFailure(::showError)
-    }
-    private suspend fun loadDataset() = withContext(Dispatchers.IO) {
-        val file="datasets/january-v10-r6/catalog.json"
-        runCatching {
-            val json=assets.open(file).bufferedReader().use {Json.parseToJsonElement(it.readText()).jsonObject}
-            for((path,key) in listOf("anchors.jsonl" to "public_anchor_sha256","observations.jsonl" to "public_observation_sha256")) {
-                val bytes=assets.open("datasets/january-v10-r6/$path").use {it.readBytes()}
-                check(ai.opstate.protocol.StudyWire.sha256(bytes)==json.getValue(key).jsonPrimitive.content) {"数据文件校验失败"}
-            }
-            DatasetSummary(json.getValue("title").jsonPrimitive.content,json.getValue("anchor_count").jsonPrimitive.int,
-                json.getValue("observation_count").jsonPrimitive.int,json.getValue("current_image_count").jsonPrimitive.int,
-                json.getValue("source_archive_sha256").jsonPrimitive.content)
-        }.onSuccess {dataset->viewState.update {it.copy(dataset=dataset)}}.onFailure {if(it !is java.io.FileNotFoundException) showError(it)}
     }
     private fun grantPermissions() {
         val permissions=mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION,Manifest.permission.ACCESS_COARSE_LOCATION)
