@@ -175,7 +175,10 @@ internal fun LazyListScope.showcase(state: OperatorViewState,actions: OperatorAc
             color=MaterialTheme.colorScheme.error)
         if(chosen.isEmpty()) Text("这里还是空的。在上面组好一张，点「加入展示」。",style=MaterialTheme.typography.bodySmall,color=Quiet)
         else LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-            itemsIndexed(chosen,key={_,item->"chosen-${item.card.decisionId}-${item.scene.path}"}) { index,item->
+            // The place is in the key as well: the same card drawn on the same picture can be in this
+            // list twice - two refs resolving to one card and one file - and a lazy list handed one key
+            // twice throws while it measures, which is the app closing as the tab draws.
+            itemsIndexed(chosen,key={position,item->"chosen-$position-${item.card.decisionId}-${item.scene.path}"}) { index,item->
                 Box(Modifier.size(84.dp).clip(RoundedCornerShape(12.dp)).clickable {openItem(index)}
                     .testTag("chosen-${item.card.decisionId}")) {
                     Composite(item.card,item.scene,Modifier.fillMaxSize(),THUMBNAIL,false)

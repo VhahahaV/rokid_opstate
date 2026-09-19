@@ -6,7 +6,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -156,7 +156,9 @@ import java.util.Locale
                 } }
                 val trials=review.trials.filter {when(filter) {"服务"->it.decision=="SERVICE";"沉默"->it.decision=="NO_SERVICE";"待查"->it.decision==null;else->true}}
                 if(trials.isEmpty()) item { Panel {Text("这里还没有试次",style=MaterialTheme.typography.titleMedium);Text("完成评估后，时间线会显示每次输入和决策。",style=MaterialTheme.typography.bodySmall,color=Quiet)} }
-                items(trials,key={it.anchorId}) { row ->
+                // Keyed by place as well as by anchor, for the reason the timeline is: a merged record
+                // can carry one anchor id from two records that both ran it.
+                itemsIndexed(trials,key={position,row->"trial-$position-${row.anchorId}"}) { _,row ->
                     Surface(Modifier.fillMaxWidth().testTag("trial-${row.anchorId}").clickable(enabled=!busy) {openTrial(row)},shape=RoundedCornerShape(16.dp),color=MaterialTheme.colorScheme.surface) {
                         Row(Modifier.padding(18.dp),horizontalArrangement=Arrangement.spacedBy(12.dp),verticalAlignment=Alignment.CenterVertically) {
                             Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(8.dp)) {

@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -125,6 +126,14 @@ internal fun LazyListScope.photoGrid(photos: List<CapturedPhoto>,open: (String)-
 /**
  * Captures and context in one visual order. Consecutive captures share a grid slot, so a long run stays
  * compact, while a context note takes a full row at the point it belongs.
+ *
+ * Every row's key carries its place in this list, because an observation id is unique only inside the
+ * record that wrote it. Merging records that were each seeded from the same history leaves two rows
+ * sharing `history-context-<source>-<n>` - and `collection-<source>-<nnn>` - in one record: both are
+ * really in it and both are drawn. A lazy list handed one key twice throws while it measures, which on
+ * the phone is the app closing as the operator scrolls the record they just merged. The place is a
+ * function of the record's own contents, so the key holds still while the list is scrolled, and the id
+ * stays in it so a crash report still names the row.
  */
 internal fun LazyListScope.timeline(items: List<TimelineItem>,open: (String)->Unit) {
     val shotsPerDay=items.filterIsInstance<TimelineItem.Shots>().flatMap {it.photos}.groupBy {photoTime(it.capturedAt,"yyyy年MM月dd日")}
@@ -140,8 +149,8 @@ internal fun LazyListScope.timeline(items: List<TimelineItem>,open: (String)->Un
             }
         }
         when(item) {
-            is TimelineItem.Note -> item(key="note-${item.context.id}") {ContextNoteCard(item.context)}
-            is TimelineItem.Shots -> items(item.photos.chunked(3),key={"row-${it.first().id}"}) { row ->
+            is TimelineItem.Note -> item(key="note-$index-${item.context.id}") {ContextNoteCard(item.context)}
+            is TimelineItem.Shots -> itemsIndexed(item.photos.chunked(3),key={slot,row->"row-$index-$slot-${row.first().id}"}) { _,row ->
                 Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                     row.forEach {photo->PhotoTile(photo,Modifier.weight(1f).aspectRatio(1f)) {open(photo.id)}}
                     repeat(3-row.size) {Spacer(Modifier.weight(1f))}
