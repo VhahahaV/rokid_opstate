@@ -53,6 +53,16 @@ import java.util.Date
 import java.util.Locale
 
 data class DatasetSummary(val title: String,val anchors: Int,val observations: Int,val images: Int,val hash: String)
+
+/**
+ * The two kinds of record, named once. A collection holds photographs and notes and nothing else; a
+ * service session is one that ran the online chain, whether it started live or continued an earlier
+ * collection. `SessionRow` draws the same split, and they have to agree - a record filed under one
+ * heading and labelled with the other is worse than no filter at all.
+ */
+internal const val COLLECTION_RECORD="图片采集"
+internal const val SERVICE_RECORD="在线服务与历史"
+internal fun recordKind(session: StudySessionEntity)=if(session.scenarioId=="local-collection-v1") COLLECTION_RECORD else SERVICE_RECORD
 data class OperatorViewState(
     val link: CxrLinkState=CxrLinkState(),val peerReady: Boolean=false,val busy: Boolean=false,
     val endpoint: String="http://127.0.0.1:8765",val harnessStatus: String="未检查",
@@ -116,6 +126,7 @@ data class OperatorActions(
     var mergeOpen by remember { mutableStateOf(false) }
     // 展示 keeps its dialogs here rather than inside the list, the way a record's photo viewer does:
     // they are windows over the screen, not items in it.
+    var recordsFilter by rememberSaveable { mutableStateOf("全部") }
     var showcaseGroupOpen by remember { mutableStateOf(false) }
     var showcaseCardPicker by remember { mutableStateOf(false) }
     var showcaseScenePicker by remember { mutableStateOf(false) }
@@ -237,8 +248,22 @@ data class OperatorActions(
                         PrimaryButton("去采集",true) {tab=0}
                         Spacer(Modifier.height(8.dp))
                     } } else {
+                        // The two kinds of record are read for different reasons - one is material to
+                        // seed a service session from, the other is where the services are - and once
+                        // there are a dozen of them the list is mostly the kind you were not looking for.
+                        val wanted=if(recordsFilter=="图片采集") COLLECTION_RECORD else if(recordsFilter=="在线服务") SERVICE_RECORD else null
+                        val shown=state.sessions.filter {wanted==null || recordKind(it)==wanted}
+                        // The chip says 在线服务 and the row says 在线服务与历史: the row is describing
+                        // the record, and the chip is a button that has to fit on a line beside two others.
+                        item { Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                            listOf("全部" to null,"图片采集" to COLLECTION_RECORD,"在线服务" to SERVICE_RECORD).forEach {(label,kind)->
+                                FilterChip(selected=recordsFilter==label,onClick={recordsFilter=label},
+                                    label={Text("$label ${if(kind==null) state.sessions.size else state.sessions.count {recordKind(it)==kind}}")})
+                            }
+                        } }
+                        if(shown.isEmpty()) item { Panel {Text("这一类还没有记录",style=MaterialTheme.typography.titleMedium,color=Quiet)} }
                         if(selection.isNotEmpty()) item { Text("已选 ${selection.size} 条 · 长按可多选，点「取消」退出",style=MaterialTheme.typography.bodySmall,color=Quiet) }
-                        items(state.sessions,key={it.sessionId}) { session ->
+                        items(shown,key={it.sessionId}) { session ->
                             val selected=session.sessionId in selection
                             SessionRow(session,selected,selection.isNotEmpty(),
                                 onClick={
@@ -490,7 +515,7 @@ internal fun sessionError(code: String)=when(code) {
                 Text(session.participantAlias,style=MaterialTheme.typography.titleMedium,modifier=Modifier.weight(1f),maxLines=1,overflow=TextOverflow.Ellipsis)
                 Tag(if(session.endedAtEpochMs==null) "未结束" else "已结束",if(session.endedAtEpochMs==null) Amber else Quiet)}
             Text(SimpleDateFormat("MM月dd日 HH:mm",Locale.CHINA).format(Date(session.startedAtEpochMs)),style=MaterialTheme.typography.bodySmall,color=Quiet)
-            Text(if(session.scenarioId=="local-collection-v1") "图片采集" else "在线服务与历史",style=MaterialTheme.typography.bodySmall,color=Quiet)
+            Text(recordKind(session),style=MaterialTheme.typography.bodySmall,color=Quiet)
         }
     }
 }

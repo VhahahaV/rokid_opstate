@@ -59,7 +59,11 @@ data class SessionSetup(val participantAlias: String,val endpoint: String,
 data class ChosenPhoto(val path: String,val width: Int,val height: Int,val rotationDegrees: Int,val sha256: String)
 data class RuntimeCandidate(val handle: String,val revision: Long,val mode: String)
 data class RuntimeViewState(val phase: String="IDLE",val sessionId: String?=null,val scenario: String?=null,
-    val observations: Int=0,val packets: Int=0,val receipts: Int=0,val rawDecision: String?=null,
+    val observations: Int=0,val packets: Int=0,val receipts: Int=0,
+    /** How many decisions have been recorded. A photograph's "served" mark is resolved from the
+     *  decision that read it, so anything showing photographs has to re-read when this moves -
+     *  the decision is written seconds after the picture, and nothing else about the counts changes. */
+    val decisions: Int=0,val rawDecision: String?=null,
     val delivery: String?=null,val latestImagePath: String?=null,val error: String?=null,val elapsedMs: Long=0,
     val replayEnabled: Boolean=false,val durationMs: Long=0,val markers: List<ScenarioMarker> = emptyList(),
     val currentContext: String?=null,val startupDisplay: String="WAITING",val replayComplete: Boolean=false,
@@ -77,6 +81,21 @@ data class RuntimeViewState(val phase: String="IDLE",val sessionId: String?=null
     val glassesCapture: Boolean=false,val bufferedPhotos: Int=0,val glassesCaptures: Int=0,val glassesFreeBytes: Long?=null,val syncBatchSize: Int=60,val syncing: Boolean=false,
     /** Whether the running session asks the model for a service on every call. */
     val forceService: Boolean=false)
+
+/**
+ * Whether the photographs on screen have to be re-read after a state change.
+ *
+ * A photograph carries the card that was drawn over it - its mark, its title, its words - and that is
+ * resolved from the decision reading it, which is journalled seconds after the picture is stored. So
+ * the strip has to be re-read when a decision lands, not only when a picture does; missing exactly
+ * that is why a photo a card had been drawn over showed no mark and no text while the card was on the
+ * glasses. It is a function so the rule can be tested without a device, because nothing about the
+ * screen looks wrong when it is broken - the strip simply keeps showing what it read too early.
+ */
+fun RuntimeViewState.requiresPhotoReload(previous: RuntimeViewState,photosEmpty: Boolean): Boolean =
+    sessionId!=previous.sessionId || liveCaptures!=previous.liveCaptures ||
+        deletedCaptures!=previous.deletedCaptures || decisions!=previous.decisions ||
+        (sessionId!=null && photosEmpty && liveCaptures>0)
 
 /** Actor-owned session state; asynchronous work returns with an epoch/generation and immutable inputs. */
 class StudyRuntimeEngine(
@@ -755,7 +774,7 @@ class StudyRuntimeEngine(
             "produced_at_epoch_ms" to response.producedAtEpochMs,"expires_at_epoch_ms" to response.expiresAtEpochMs,"model_latency_ms" to event.latencyMs),now)
         val verdict=DeliveryPolicy.evaluate(event.pending.request,response,event.pending.episode,session.packetEpisodes[event.pending.episode.episodeHandle],
             session.id,session.epoch,session.id,session.epoch,now,session.receipts,session.serviceVisible || session.delivery!=null)
-        _state.update {it.copy(rawDecision=response.decision.name,delivery=verdict.status.name,error=null)}
+        _state.update {it.copy(decisions=it.decisions+1,rawDecision=response.decision.name,delivery=verdict.status.name,error=null)}
         if(verdict.status==DeliveryPolicy.Status.DELIVER && session.setup.shadowInference) {
             delivery(session,response.decisionId,"NOT_ATTEMPTED","SHADOW_INFERENCE",now)
             session.packetEpisodes.remove(event.pending.episode.episodeHandle)

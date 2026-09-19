@@ -22,6 +22,7 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import ai.opstate.rokid.phone.app.BuildConfig
 import ai.opstate.rokid.phone.ui.*
 import ai.opstate.rokid.phone.runtime.StudyRuntimeService
+import ai.opstate.rokid.phone.runtime.requiresPhotoReload
 import ai.opstate.rokid.phone.runtime.SessionSetup
 import ai.opstate.rokid.phone.runtime.SessionMode
 import ai.opstate.rokid.phone.runtime.ChosenPhoto
@@ -99,10 +100,7 @@ class MainActivity : ComponentActivity() {
             var previous=graph.studyRuntime.state.value
             graph.studyRuntime.state.collect {runtime->
             viewState.update {it.copy(runtime=runtime)}
-            // `deletedCaptures` is in here as well as `liveCaptures`: removing a photograph does not
-            // change how many were taken, and the strip still has to lose it.
-            if(runtime.sessionId!=previous.sessionId || runtime.liveCaptures!=previous.liveCaptures || runtime.deletedCaptures!=previous.deletedCaptures ||
-                (runtime.sessionId!=null && viewState.value.livePhotos.isEmpty() && runtime.liveCaptures>0)) {
+            if(runtime.requiresPhotoReload(previous,viewState.value.livePhotos.isEmpty())) {
                 val photos=withContext(Dispatchers.IO) {runtime.sessionId?.let {SessionReviewRepository(graph.journal).photos(it)}.orEmpty()}
                 viewState.update {it.copy(livePhotos=photos)}
             }
