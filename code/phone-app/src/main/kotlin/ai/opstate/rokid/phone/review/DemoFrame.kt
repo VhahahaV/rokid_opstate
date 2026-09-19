@@ -1,9 +1,6 @@
 package ai.opstate.rokid.phone.review
 
-import ai.opstate.protocol.StudyWire
 import android.graphics.*
-import kotlinx.serialization.json.JsonObject
-import java.io.File
 
 /**
  * What a delivered service looked like to the wearer: the frame the model was reading, with the card
@@ -125,52 +122,10 @@ object DemoFrameRenderer {
         "AWARENESS"->"提醒";"DECISION"->"建议";"PREPARATION"->"准备";"EXECUTION"->"执行";else->null
     }
 
-    /** A candidate: a service that was actually delivered and seen. */
-    data class Candidate(val decisionId: String,val anchorId: String,val at: Long,val title: String,val body: String,
-        val mode: String?,val latencyMs: Long?,val delivery: String?,val scene: java.io.File)
-
     /**
-     * Every service in [trials] that was really shown on the glasses, newest first. A decision that was
-     * suppressed, expired or never acknowledged is not a moment anyone saw, so it is not a candidate.
+     * Which services are worth showing is not decided here any more. Choosing them is the 展示 tab's
+     * job, and it has to answer the same question across every record rather than one at a time, so
+     * the rule lives with the scan in `Showcase.kt`. This file draws a card over a picture and knows
+     * nothing about where either came from.
      */
-    /**
-     * Renders every candidate into `root/<sessionId>/` and writes an index beside them.
-     *
-     * The image is for looking at and the index is for judging: it carries the mode, the model latency
-     * and the time, so a set can be shortlisted without opening each frame.
-     */
-    fun write(root: File,sessionId: String,candidates: List<Candidate>): Pair<File,Int> {
-        val directory=File(root,sessionId).apply {mkdirs()}
-        val index=StringBuilder()
-        var written=0
-        for(candidate in candidates) {
-            val scene=BitmapFactory.decodeFile(candidate.scene.path) ?: continue
-            val frame=render(scene,Card(candidate.title,candidate.body,modeLabel(candidate.mode),true))
-            scene.recycle()
-            val name=candidate.decisionId.replace(Regex("[^A-Za-z0-9_-]"),"_")
-            val target=File(directory,"$name.jpg")
-            target.outputStream().use {frame.compress(Bitmap.CompressFormat.JPEG,92,it)}
-            frame.recycle()
-            index.append(StudyWire.json.encodeToString(JsonObject.serializer(),StudyWire.payload(
-                "decision_id" to candidate.decisionId,"at_epoch_ms" to candidate.at,"title" to candidate.title,
-                "body" to candidate.body,"service_mode" to candidate.mode,"model_latency_ms" to candidate.latencyMs,
-                "file" to target.name))).append('\n')
-            written++
-        }
-        File(directory,"index.jsonl").writeText(index.toString())
-        return directory to written
-    }
-
-    fun candidates(repository: SessionReviewRepository,sessionId: String,trials: List<TrialSummary>): List<Candidate> =
-        trials.filter {it.decision=="SERVICE" && it.delivery=="DISPLAY_VISIBLE" && it.title!=null}
-            .sortedByDescending {it.at}
-            .mapNotNull {summary->
-                val review=repository.trial(sessionId,summary)
-                val decision: JsonObject=review.decision ?: return@mapNotNull null
-                val scene=review.image ?: return@mapNotNull null
-                Candidate(decision.string("decision_id") ?: summary.anchorId,summary.anchorId,summary.at,
-                    decision.string("title") ?: return@mapNotNull null,
-                    decision.string("body").orEmpty(),
-                    decision.string("service_mode"),summary.latencyMs,summary.delivery,scene)
-            }
 }

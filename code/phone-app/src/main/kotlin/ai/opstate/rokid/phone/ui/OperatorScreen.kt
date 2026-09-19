@@ -42,6 +42,8 @@ import ai.opstate.rokid.phone.replay.HistoryPreview
 import ai.opstate.rokid.phone.replay.LocalCollectionSummary
 import ai.opstate.rokid.phone.runtime.SyntheticContextInput
 import ai.opstate.rokid.phone.review.SessionReview
+import ai.opstate.rokid.phone.review.ShowcaseFrame
+import ai.opstate.rokid.phone.review.ShowcaseState
 import ai.opstate.rokid.phone.review.TrialReview
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.*
@@ -67,6 +69,7 @@ data class OperatorViewState(
     val scenarioTimeline: ScenarioTimeline=ScenarioTimeline(720000,emptyList()),
     val historyPreview: HistoryPreview?=null,val importedHistory: ImportedHistory?=null,
     val logSessionId: String?=null,val runtimeLogs: List<RuntimeLogEntry> = emptyList(),
+    val showcase: ShowcaseState=ShowcaseState(),
 )
 data class OperatorActions(
     val scan: ()->Unit,val reconnect: ()->Unit,val disconnect: ()->Unit,val p2p: ()->Unit,
@@ -88,6 +91,12 @@ data class OperatorActions(
     val renameSession: (String,String)->Unit={_,_->},
     val deleteSessions: (List<String>)->Unit={},
     val mergeSessions: (List<String>,String)->Unit={_,_->},
+    /** The 展示 tab: a cross-record scan of every service that was really shown. */
+    val refreshShowcase: ()->Unit={},val toggleShowcaseFrame: (ShowcaseFrame)->Unit={},
+    val moveShowcaseFrame: (ShowcaseFrame,Int)->Unit={_,_->},val removeShowcaseFrame: (ShowcaseFrame)->Unit={},
+    val renameShowcaseGroup: (String)->Unit={},val exportShowcase: ()->Unit={},
+    /** Replays one delivered card, from whichever record it came from. */
+    val replayShowcaseCard: (ShowcaseFrame)->Unit={},
 )
 
 @Composable fun OperatorScreen(state: OperatorViewState,actions: OperatorActions) {
@@ -102,6 +111,10 @@ data class OperatorActions(
     var renameTarget by remember { mutableStateOf<StudySessionEntity?>(null) }
     var deleteTargets by remember { mutableStateOf<List<String>>(emptyList()) }
     var mergeOpen by remember { mutableStateOf(false) }
+    // 展示 keeps its two dialogs here rather than inside the list, the way a record's photo viewer
+    // does: both are windows over the screen, not items in it.
+    var showcaseGroupOpen by remember { mutableStateOf(false) }
+    var showcaseFrame by remember { mutableStateOf<ShowcaseFrame?>(null) }
     val screenScope=rememberCoroutineScope()
     val openCredentials: ()->Unit={connection=false;tab=3;screenScope.launch {pageScrollStates[3].scrollToItem(1)}}
     BackHandler(enabled=connection || tab!=0 || selection.isNotEmpty()) {
@@ -111,6 +124,10 @@ data class OperatorActions(
     LaunchedEffect(state.message) {
         state.message?.let { snackbar.showSnackbar(it); actions.dismissMessage() }
     }
+    // Scanning every record parses a few hundred observations each, so it happens on first opening the
+    // tab and on 刷新 - never on a recomposition. `loaded` is what keeps a revisit from paying for it
+    // twice; the scan itself has to run up here because the tab body is a LazyListScope, not a composable.
+    LaunchedEffect(tab) {if(tab==2 && !state.showcase.loaded) actions.refreshShowcase()}
     Scaffold(
         containerColor=Canvas,
         snackbarHost={SnackbarHost(snackbar)},
@@ -123,7 +140,7 @@ data class OperatorActions(
                 TextButton(onClick={connection=true}) {Text(if(state.peerReady) "眼镜已连接" else if(state.link.bluetoothConnected) "确认眼镜应用中" else "连接眼镜",color=if(state.peerReady) Success else Quiet)}
             }
             Spacer(Modifier.height(8.dp))
-            Text(if(connection) "连接眼镜" else listOf("开始","我的记录","历史","设置")[tab],style=MaterialTheme.typography.headlineLarge)
+            Text(if(connection) "连接眼镜" else listOf("开始","我的记录","展示","设置")[tab],style=MaterialTheme.typography.headlineLarge)
             if(state.busy) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top=12.dp))
         } },
         bottomBar={ Column {
@@ -138,7 +155,10 @@ data class OperatorActions(
             }
           }
           NavigationBar(containerColor=Color(0xFFFCFDF9),tonalElevation=0.dp) {
-            listOf(0 to ("开始" to Icons.Default.Home),1 to ("记录" to Icons.Default.List),3 to ("设置" to Icons.Default.Settings)).forEach { (index,pair) ->
+            // Index 2 was reserved from the first commit and never wired; 展示 takes it, so no page is
+            // renumbered and the 设置 index that `openCredentials` scrolls to stays 3.
+            listOf(0 to ("开始" to Icons.Default.Home),1 to ("记录" to Icons.Default.List),
+                2 to ("展示" to Icons.Default.Star),3 to ("设置" to Icons.Default.Settings)).forEach { (index,pair) ->
                 val (label,icon)=pair
                 NavigationBarItem(selected=tab==index && !connection,onClick={tab=index;connection=false},
                     icon={Icon(icon,label,Modifier.size(21.dp))},label={Text(label)},
@@ -224,6 +244,7 @@ data class OperatorActions(
                         }
                     }
                 }
+                2 -> showcase(state,actions,openGroup={showcaseGroupOpen=true},openFrame={showcaseFrame=it})
                 3 -> {
                     item {Panel {
                         Text("设备与连接",style=MaterialTheme.typography.titleMedium)
@@ -263,6 +284,16 @@ data class OperatorActions(
             onConfirm={ name -> actions.mergeSessions(selection.toList(),name);mergeOpen=false;selection=emptySet() },
             onDismiss={mergeOpen=false})
     }
+    if(showcaseGroupOpen) RecordNameDialog(title="展示组名",initial=state.showcase.group,confirmLabel="保存",
+        body="图片写到相册 Pictures/OPSTATE/<组名>，卡片文字写到 Download/OPSTATE/<组名>。用同一个组名再导一次会替换掉上一次，不会越导越多。",
+        onConfirm={name->actions.renameShowcaseGroup(name);showcaseGroupOpen=false},
+        onDismiss={showcaseGroupOpen=false})
+    showcaseFrame?.let {frame-> ShowcasePreviewDialog(frame,
+        selected=state.showcase.selected.any {it.decisionId==frame.decisionId},
+        enabled=!state.busy,
+        toggle={actions.toggleShowcaseFrame(frame)},
+        replay={actions.replayShowcaseCard(frame)},
+        close={showcaseFrame=null}) }
     if(deleteTargets.isNotEmpty()) AlertDialog(
         onDismissRequest={deleteTargets=emptyList()},
         title={Text(if(deleteTargets.size==1) "删除这条记录？" else "删除这 ${deleteTargets.size} 条记录？")},
@@ -272,8 +303,8 @@ data class OperatorActions(
     )
 }
 
-/** Shared name prompt for renaming and for naming a merged record. */
-@Composable private fun RecordNameDialog(title: String,initial: String,confirmLabel: String,body: String?=null,onConfirm: (String)->Unit,onDismiss: ()->Unit) {
+/** Shared name prompt for renaming a record, naming a merged one, and naming a 展示 group. */
+@Composable internal fun RecordNameDialog(title: String,initial: String,confirmLabel: String,body: String?=null,onConfirm: (String)->Unit,onDismiss: ()->Unit) {
     var name by remember(initial) {mutableStateOf(initial)}
     AlertDialog(
         onDismissRequest=onDismiss,

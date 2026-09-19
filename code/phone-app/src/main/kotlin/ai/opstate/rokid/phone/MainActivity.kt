@@ -66,6 +66,10 @@ class MainActivity : ComponentActivity() {
         window.navigationBarColor=android.graphics.Color.rgb(252,253,249)
         val endpoint=graph.settings.getString("harness_url",getPreferences(MODE_PRIVATE).getString("harness_url","http://127.0.0.1:8765"))!!
         viewState.update { it.copy(endpoint=endpoint,expectedModelId=graph.settings.getString("expected_model_id","").orEmpty(),directModel=graph.modelConfig(),syncBatchSetting=graph.settings.getInt("sync_batch_size",60)) }
+        // The showcase shortlist outlives the process on purpose: picking the moments worth showing is
+        // something an operator comes back to over days, not something to redo after every restart.
+        val (showcaseRefs,showcaseGroup)=ShowcaseStore.read(graph.settings)
+        viewState.update {it.copy(showcase=it.showcase.copy(selected=showcaseRefs,group=showcaseGroup))}
         // Restore the history selection made before this process started. Only the reference and the
         // counts are kept here; the seed itself is read from the journal when the session starts.
         graph.settings.getString("history_source_session_id",null)?.let {sourceId->
@@ -138,16 +142,6 @@ class MainActivity : ComponentActivity() {
                     addContext={type,title,body,at->addRecordContext(selected!!.session.sessionId,type,title,body,at)},
                     importContext={importRecordContext(selected!!.session.sessionId)},
                     replayCard={anchor->replayServiceCard(selected!!.session.sessionId,anchor)},
-                    demoFrames={ operate {
-                        val sessionId=selected!!.session.sessionId
-                        val trials=selected!!.trials
-                        val outcome=withContext(Dispatchers.IO) {
-                            val repository=SessionReviewRepository(graph.journal)
-                            DemoFrameRenderer.write(File(getExternalFilesDir(null),"demo"),sessionId,
-                                DemoFrameRenderer.candidates(repository,sessionId,trials))
-                        }
-                        message(if(outcome.second==0) "这次会话没有真实显示过的主动服务" else "已生成 ${outcome.second} 帧：${outcome.first.absolutePath}")
-                    } },
                     refresh={openSession(selected.session.sessionId)},dismissMessage={viewState.update {it.copy(message=null)}},logs={openLogs(selected.session.sessionId)},
                     deletePhoto={observationId->deletePhoto(selected.session.sessionId,observationId)})
                 } else screenState.SaveableStateProvider("operator") { OperatorScreen(state,OperatorActions(
@@ -175,6 +169,10 @@ class MainActivity : ComponentActivity() {
                 syncPhotos={graph.studyRuntime.syncPhotos()},
                 renameSession={id,name->renameSession(id,name)},deleteSessions={ids->deleteSessions(ids)},mergeSessions={ids,name->mergeSessions(ids,name)},
                 deleteLivePhoto={observationId->viewState.value.runtime.sessionId?.let {sessionId->deletePhoto(sessionId,observationId)}},
+                refreshShowcase={refreshShowcase()},toggleShowcaseFrame={toggleShowcaseFrame(it)},
+                moveShowcaseFrame={frame,delta->moveShowcaseFrame(frame,delta)},removeShowcaseFrame={setShowcaseSelected(it,false)},
+                renameShowcaseGroup={renameShowcaseGroup(it)},exportShowcase={exportShowcase()},
+                replayShowcaseCard={replayServiceCard(it.sessionId,it.anchorId)},
                 resume={operate {graph.studyRuntime.resumeSession()}},
                 seek={position->operate {graph.studyRuntime.seekTo(position).getOrThrow()}},
                 previewHistory={index->historyPreviewJob?.cancel();historyPreviewJob=scope.launch {
@@ -383,6 +381,65 @@ class MainActivity : ComponentActivity() {
         check(ids.none {it==graph.studyRuntime.state.value.sessionId}) { "RECORD_IN_USE" }
         val merged=withContext(Dispatchers.IO) {graph.journal.merge(ids,name)}
         message("已合并为「$name」，共 ${ids.size} 段")
+    }
+    /**
+     * Reads every record for the services that were really on the glasses.
+     *
+     * Its own launcher rather than [operate], because it is the one long action that must not block the
+     * rest of the console: it runs while the operator keeps reading the list, and its own `loading` flag
+     * is what the tab shows progress from.
+     */
+    private fun refreshShowcase() {
+        if(viewState.value.showcase.loading) return
+        viewState.update {it.copy(showcase=it.showcase.copy(loading=true))}
+        scope.launch {
+            try {
+                graph.storageReady.await()
+                val frames=withContext(Dispatchers.IO) {ShowcaseRepository.scan(graph.journal,graph.database.dao().sessions())}
+                viewState.update {it.copy(showcase=it.showcase.copy(frames=frames,loaded=true,loading=false))}
+            } catch(cancelled: CancellationException) {throw cancelled}
+            catch(error: Exception) {
+                viewState.update {it.copy(showcase=it.showcase.copy(loading=false))}
+                showError(error)
+            }
+        }
+    }
+    private fun toggleShowcaseFrame(frame: ShowcaseFrame)=setShowcaseSelected(frame,!viewState.value.showcase.selected.any {it==ShowcaseRepository.refOf(frame)})
+    private fun setShowcaseSelected(frame: ShowcaseFrame,selected: Boolean) {
+        val ref=ShowcaseRepository.refOf(frame)
+        val current=viewState.value.showcase.selected
+        // Appended, not sorted: the order the moments are chosen in is the order they will be shown in.
+        val next=if(selected) current+ref else current.filterNot {it==ref}
+        updateShowcase {it.copy(selected=next)}
+    }
+    private fun moveShowcaseFrame(frame: ShowcaseFrame,delta: Int) {
+        val ref=ShowcaseRepository.refOf(frame)
+        val selected=viewState.value.showcase.selected.toMutableList()
+        val index=selected.indexOf(ref);val target=index+delta
+        if(index<0 || target !in selected.indices) return
+        selected[index]=selected[target];selected[target]=ref
+        updateShowcase {it.copy(selected=selected)}
+    }
+    private fun renameShowcaseGroup(name: String)=updateShowcase {it.copy(group=name.trim().ifBlank {ShowcaseState.DEFAULT_GROUP})}
+    /** Every change to the shortlist is written straight through, so a selection cannot be lost to a crash. */
+    private fun updateShowcase(change: (ShowcaseState)->ShowcaseState) {
+        viewState.update {it.copy(showcase=change(it.showcase))}
+        val showcase=viewState.value.showcase
+        ShowcaseStore.write(graph.settings,showcase.selected,showcase.group)
+    }
+    private fun exportShowcase()=operate {
+        val showcase=viewState.value.showcase
+        val chosen=showcase.chosen
+        check(chosen.isNotEmpty()) {"SHOWCASE_NOTHING_SELECTED"}
+        val published=withContext(Dispatchers.IO) {
+            // Assembled afresh every time: a shorter selection than last time would otherwise leave the
+            // frames that were dropped still sitting in the staging directory and in the album.
+            val root=File(requireNotNull(getExternalFilesDir(null)),"showcase/${showcase.group}")
+            root.deleteRecursively()
+            ShowcaseExporter.write(root,chosen)
+            ShowcaseExporter.publish(this@MainActivity,showcase.group,root)
+        }
+        message("已导出 ${chosen.size} 个时刻：图片在相册 Pictures/OPSTATE/${showcase.group}，卡片文字在 Download/OPSTATE/${showcase.group}（共 $published 个文件）")
     }
     private fun message(text: String) { viewState.update {it.copy(message=text)} }
     private fun showError(error: Throwable) {

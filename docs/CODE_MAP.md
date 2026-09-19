@@ -20,9 +20,10 @@
 - `transport/LegacyCxrTransport.kt`：真实研究握手、clock sync、图像回传；`rokid/CxrPhoneLink.kt` / `StudyWifiDirect.kt` 管理官方 SDK 鉴权、Bluetooth 与 P2P。
 - `runtime/DirectModelClient.kt` / `DirectModelConfig.kt` / `ResponseParser.kt`：默认 `qwen3.8-max` API Key 直连、当前画面与最多 4 张历史画面、packet envelope、冻结参数、原文与标准化结果。`RemoteHarnessClient.kt` 保留兼容路径。
 - `data/StudyJournal.kt` / `StudyDatabase.kt`：Room v2、私有文件、审计链、完整导出和中断收尾。`deletePhoto` 单张删除：链是 append-only 的，所以删除写成一条 `PHOTO_DELETED` 事件并随后删掉 JPEG，而不是删除任何 journal 行——`verify` 与 `export` 因此照常，`deletedPhotoObservations` 是各读取方要减掉的那一组。已投递主动服务正在读的那一帧不允许删除（它是演示帧的实景那一半）。
+- `review/Showcase.kt`：展示的唯一入口——跨记录扫描「真的在眼镜上显示过」的主动服务（按 decision 走 `decisions` + `deliveries`，再经请求的 `current_asset_id` 找到当时那张图；**不解析 observations**），选择持久化在 SharedPreferences，组装由 `ShowcaseExporter.write`（每个时刻合成图/原图/卡片文字三件 + `index.jsonl`，写在应用私有目录）与 `publish`（图片进相册 `Pictures/OPSTATE/<组名>`，文字进 `Download/OPSTATE/<组名>`——相册目录只收图片——同组重导先清空再写）两步完成。渲染复用 `review/DemoFrame.kt` 的 `DemoFrameRenderer.render`。
 - `replay/LocalCollectionHistory.kt`：枚举已完成记录，校验图片哈希并读取合成数据；`PublicReplayDataset.kt` / `HistoryContinuation.kt` 管理 R6 公共历史、前缀隔离与现场续接。历史加载本身只读，不创建会话或触发服务；单次模型视觉历史最多 4 张。
 - `scenario/ScenarioPlayback.kt` / `PublicScenario.kt`：虚拟时间线、暂停/拖动和 authoring 字段隔离。
-- `ui/SessionSetupSheet.kt`：先可选加载历史，再选择采集/在线服务；采集间隔和 1–500 张同步批量由手机设置。`ObservationControls.kt` / `PhotoGallery.kt`：实时照片、按日期相册、大图和元数据，照片详情里可直接删除单张；`SessionReviewScreen.kt`：采集相册、服务试次与导出；`RuntimeDiagnostics.kt`：次级运行详情。
+- `ui/SessionSetupSheet.kt`：先可选加载历史，再选择采集/在线服务；采集间隔和 1–500 张同步批量由手机设置。`ObservationControls.kt` / `PhotoGallery.kt`：实时照片、按日期相册、大图和元数据，照片详情里可直接删除单张；`SessionReviewScreen.kt`：采集相册、服务试次与导出；`ShowcasePanel.kt`：展示标签页；`RuntimeDiagnostics.kt`：次级运行详情。
 
 ## 眼镜主要入口
 

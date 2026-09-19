@@ -32,26 +32,31 @@ import ai.opstate.rokid.phone.review.string
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 internal fun photoTime(at: Long,pattern: String="MM月dd日 HH:mm:ss")=if(at>0) SimpleDateFormat(pattern,Locale.CHINA).format(Date(at)) else "未记录"
 
-@Composable internal fun PhotoPreview(photo: CapturedPhoto,modifier: Modifier=Modifier,full: Boolean=false) {
-    var loading by remember(photo.file.path) {mutableStateOf(true)}
-    val bitmap by produceState<ImageBitmap?>(null,photo.file.path,full) {
+@Composable internal fun PhotoPreview(photo: CapturedPhoto,modifier: Modifier=Modifier,full: Boolean=false)=
+    PhotoPreview(photo.file,"拍摄于 ${photoTime(photo.capturedAt)}",modifier,full)
+
+/** The same decode, for a picture that is not a [CapturedPhoto] - a showcase frame's original. */
+@Composable internal fun PhotoPreview(file: File,description: String,modifier: Modifier=Modifier,full: Boolean=false) {
+    var loading by remember(file.path) {mutableStateOf(true)}
+    val bitmap by produceState<ImageBitmap?>(null,file.path,full) {
         value=withContext(Dispatchers.IO) {
             val bounds=BitmapFactory.Options().apply {inJustDecodeBounds=true}
-            BitmapFactory.decodeFile(photo.file.path,bounds)
+            BitmapFactory.decodeFile(file.path,bounds)
             var sample=1
             while(maxOf(bounds.outWidth,bounds.outHeight)/sample>(if(full) 2048 else 480)) sample*=2
-            BitmapFactory.decodeFile(photo.file.path,BitmapFactory.Options().apply {inSampleSize=sample})?.asImageBitmap()
+            BitmapFactory.decodeFile(file.path,BitmapFactory.Options().apply {inSampleSize=sample})?.asImageBitmap()
         }
         loading=false
     }
     Box(modifier.background(if(full) Color.Black else Line),contentAlignment=Alignment.Center) {
-        bitmap?.let {Image(it,"拍摄于 ${photoTime(photo.capturedAt)}",Modifier.fillMaxSize(),contentScale=if(full) ContentScale.Fit else ContentScale.Crop)}
+        bitmap?.let {Image(it,description,Modifier.fillMaxSize(),contentScale=if(full) ContentScale.Fit else ContentScale.Crop)}
             ?: Text(if(loading) "加载中…" else "原图无法读取",color=if(full) Color.White else Quiet,style=MaterialTheme.typography.bodySmall)
     }
 }
