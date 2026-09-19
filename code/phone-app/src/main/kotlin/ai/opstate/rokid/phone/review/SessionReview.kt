@@ -80,15 +80,29 @@ class SessionReviewRepository(private val journal: StudyJournal) {
                 servedBody=hit?.second?.string("body"),servedMode=hit?.second?.string("service_mode"),servedAnchor=hit?.first)
         }.sortedByDescending {it.capturedAt}
     }
+    /**
+     * The operator-authored context in a record, in the three shapes it has been written in.
+     *
+     * The dialog stores `title` and `body` apart. A record seeded from an earlier one is written by
+     * `appendObservation`, which keeps only `content` - no title, no body. The imported public history
+     * keeps only `public_text`. The two older shapes put the "[TYPE] title" header inside the text
+     * itself, which is where their title has to come from, because the separate field is simply absent.
+     *
+     * Reading only `body` and `public_text` - which is what this did - left every seeded note blank:
+     * the picker that offers them to the operator drew empty rows, and choosing one failed validation.
+     */
     fun contexts(id: String): List<ContextEntry> = dao.stream(id,"observations").mapNotNull {event->
         val row=event.json()
         if(row.string("kind")!="SYNTHETIC_CONTEXT") return@mapNotNull null
-        // `body` is stored separately now; rows written before it existed keep the "[TYPE] title"
-        // header inside public_text, so strip that rather than showing it twice beside the title.
-        val title=row.string("title") ?: ""
-        val text=row.string("body") ?: (row.string("public_text") ?: "").removePrefix("[${row.string("synthetic_type") ?: "NOTE"}] $title").trimStart('\n')
+        val body=row.string("body")
+        val stored=body ?: row.string("content") ?: row.string("public_text") ?: ""
+        val header=if(body==null) CONTEXT_HEADER.find(stored) else null
+        val withoutHeader=if(header!=null) stored.substring(header.value.length) else stored
+        val title=row.string("title")?.takeIf {it.isNotBlank()}
+            ?: withoutHeader.substringBefore('\n').trim()
+        val text=if(header!=null) withoutHeader.substringAfter('\n',"").trimStart('\n') else withoutHeader
         ContextEntry(row.string("observation_id") ?: event.sequence.toString(),
-            row.string("synthetic_type") ?: "NOTE",title,text,
+            row.string("synthetic_type") ?: header?.groupValues?.get(1) ?: "NOTE",title,text,
             row["occurred_at_epoch_ms"]?.jsonPrimitive?.longOrNull ?: 0)
     }.sortedBy {it.occurredAt}
     fun load(id: String): SessionReview {
@@ -138,3 +152,6 @@ class SessionReviewRepository(private val journal: StudyJournal) {
     }
 }
 fun JsonObject.string(key: String)=get(key)?.jsonPrimitive?.contentOrNull
+
+/** The "[TYPE] title" line the two older context writers left at the head of the text. */
+private val CONTEXT_HEADER=Regex("^\\[([A-Z_]+)] ?")

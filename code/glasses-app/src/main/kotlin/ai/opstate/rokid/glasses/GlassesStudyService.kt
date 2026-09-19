@@ -216,7 +216,14 @@ class GlassesStudyService : Service() {
             // Logged because a card that never arrives and a card that is waiting for a page look identical
             // from the outside, and both look like "the glasses did not show it".
             android.util.Log.i("OPSTATE","CARD_HELD type=${message.type} interactive=${getSystemService(PowerManager::class.java).isInteractive} held=${heldCard!=null}")
-            if(!getSystemService(PowerManager::class.java).isInteractive && heldCard==null) {
+            // Held whenever the page cannot show it, not only when the panel is asleep. A page that is
+            // merely not in front - the wearer looked away, or another window took focus - used to be a
+            // refusal, and a refusal throws the service away: the model had already produced the card,
+            // and the wearer never saw it. Measured on the phone: two force-service cards refused
+            // DISPLAY_NOT_READY while the page was up but unfocused, and nothing afterwards until the
+            // link dropped and came back. One card is held at a time; a second while one is waiting is
+            // still refused, so a card cannot pile up behind a page that never comes back.
+            if(heldCard==null) {
                 heldCard=message;presentPage();return
             }
             android.util.Log.i("OPSTATE","CARD_REFUSED type=${message.type} code=DISPLAY_NOT_READY")
@@ -367,15 +374,17 @@ class GlassesStudyService : Service() {
     @Suppress("DEPRECATION")
     private fun presentPage() {
         val power=getSystemService(PowerManager::class.java)
-        if(power.isInteractive) return
+        // Raising the page is what this is for, and it is needed whether the panel is asleep or merely
+        // showing something else - the wearer looked away and the page lost window focus, which is the
+        // other half of why a card could not be shown. Only the wake lock below is conditional.
+        android.util.Log.i("OPSTATE","PAGE_PRESENT interactive=${power.isInteractive}")
         // Starting the activity is not enough to light the panel. When this page is already the
         // resumed activity - which it is whenever the panel merely slept - the start arrives as
         // onNewIntent, the activity's turnScreenOn never fires, and the display stays off. Then the
         // page can never report itself visible, so a held card is never flushed and every later card
         // is refused DISPLAY_NOT_READY. Measured on the glasses: a held startup card sat unflushed
         // while the panel stayed asleep. The wake lock is what actually lights it.
-        android.util.Log.i("OPSTATE","PAGE_WAKE starting")
-        runCatching {
+        if(!power.isInteractive) runCatching {
             power.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
                 "OPSTATE:present").acquire(3_000)
         }.onFailure { android.util.Log.w("OPSTATE","PAGE_WAKE_FAILED ${it.javaClass.simpleName}") }

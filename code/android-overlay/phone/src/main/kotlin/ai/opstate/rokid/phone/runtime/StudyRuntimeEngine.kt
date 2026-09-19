@@ -197,6 +197,13 @@ class StudyRuntimeEngine(
                     is Event.Seek -> event.reply.complete(Result.failure(error))
                     is Event.SeekHistory -> event.reply.complete(Result.failure(error))
                     is Event.ContextInput -> event.reply.complete(Result.failure(error))
+                    // Every event carrying a reply has to answer it here. The two that evaluate a
+                    // chosen source were missing, so a handler that threw left its caller awaiting a
+                    // reply that was never coming: `operate` never returned, `busy` stayed true, and
+                    // the console was dead until the app was force-stopped - which is exactly what a
+                    // blank note from the context picker did, by failing validation on the way in.
+                    is Event.EvaluatePhoto -> event.reply.complete(Result.failure(error))
+                    is Event.EvaluateContext -> event.reply.complete(Result.failure(error))
                     is Event.Prepared -> {
                         startingReply?.complete(Result.failure(error));startingReply=null
                         active?.let {runCatching {journal.stop(it.id,System.currentTimeMillis())}}
