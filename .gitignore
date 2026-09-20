@@ -20,6 +20,10 @@ dist/
 .environment-setup.log
 *.zip
 code/phone-app/src/debug/assets/datasets/
+# The CVTT encoder is 110 MiB: over GitHub's 100 MiB per-file limit, so pushing it would be rejected
+# outright, and it is 80x the largest file this repository tracks. It ships in dist/cvtt_frontend_v1.zip
+# alongside the release; the three heads, the contract and the licence next to it are small and tracked.
+code/android-overlay/phone/src/main/assets/cvtt/encoder.onnx
 /icon.png
 archive/
 reports/

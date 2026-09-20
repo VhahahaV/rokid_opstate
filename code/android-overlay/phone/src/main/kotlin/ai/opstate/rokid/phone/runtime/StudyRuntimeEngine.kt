@@ -54,7 +54,9 @@ data class SessionSetup(val participantAlias: String,val endpoint: String,
     val collectionHistorySessionId: String?=null,val collectionHistoryImageLimit: Int=4,val startLiveAfterHistory: Boolean=false,
     /** Demo mode: run under the forced-service prompt so every call returns a service to show. */
     val forceService: Boolean=false,
-    val glassesCapture: Boolean=false,val syncBatchSize: Int=60)
+    val glassesCapture: Boolean=false,val syncBatchSize: Int=60,
+    /** CVTT runs on the glasses before a visual observation is uploaded. */
+    val frontEndEnabled: Boolean=true)
 /** A stored frame the operator picked to evaluate, with the measurements already recorded for it. */
 data class ChosenPhoto(val path: String,val width: Int,val height: Int,val rotationDegrees: Int,val sha256: String)
 data class RuntimeCandidate(val handle: String,val revision: Long,val mode: String)
@@ -79,6 +81,7 @@ data class RuntimeViewState(val phase: String="IDLE",val sessionId: String?=null
     val deletedCaptures: Int=0,
     val savedImageBytes: Long=0,val latestImageBytes: Int?=null,val storageFreeBytes: Long?=null,
     val glassesCapture: Boolean=false,val bufferedPhotos: Int=0,val glassesCaptures: Int=0,val glassesFreeBytes: Long?=null,val syncBatchSize: Int=60,val syncing: Boolean=false,
+    val frontEndEnabled: Boolean=true,val frontEndVersion: String?=null,
     /** Whether the running session asks the model for a service on every call. */
     val forceService: Boolean=false)
 
@@ -148,6 +151,12 @@ class StudyRuntimeEngine(
         /** Notes imported as this session's history; every request carries them see the store's pinnedIds. */
         val historyContextIds=linkedSetOf<String>()
         var historyReady=seed!=null || collectionSeed!=null;var automaticCapture=true;var demoMode=setup.glassesDemoMode;var lastDemoStatus: String?=null
+        var captureIntervalMs=setup.captureIntervalMs;var frontEndEnabled=setup.frontEndEnabled
+        /** The visual front end, built on first use and closed with the session. */
+        var frontEnd: CvttFrontEnd?=null
+        /** A context arrived: the next frame is worth a model call whatever the front end says. */
+        var digitalPending=false
+        var syncBatchSize=setup.syncBatchSize
         var pendingContextCard: JsonObject?=null
         var stopping=false
         val committedBuffered=hashSetOf<String>()
@@ -167,6 +176,8 @@ class StudyRuntimeEngine(
         data class EvaluatePhoto(val photo: ChosenPhoto,val reply: CompletableDeferred<Result<Unit>>): Event()
         data class EvaluateContext(val input: SyntheticContextInput,val reply: CompletableDeferred<Result<Unit>>): Event()
         data class SetForceService(val enabled: Boolean,val reply: CompletableDeferred<Result<Unit>>): Event()
+        data class ConfigureCapture(val captureIntervalMs: Long,val frontEndEnabled: Boolean,
+            val syncBatchSize: Int,val reply: CompletableDeferred<Result<Unit>>): Event()
         /** One photograph the operator took out of the live record. */
         data class DeletePhoto(val observationId: String,val reply: CompletableDeferred<Result<Boolean>>): Event()
         data class AutoCapture(val enabled: Boolean): Event()
@@ -194,6 +205,7 @@ class StudyRuntimeEngine(
                     is Event.EvaluatePhoto -> {chosenPhoto(chosenSession(),event.photo);event.reply.complete(Result.success(Unit))}
                     is Event.EvaluateContext -> {evaluateNow(chosenSession(),addContext(event.input));event.reply.complete(Result.success(Unit))}
                     is Event.SetForceService -> {applyForceService(event.enabled);event.reply.complete(Result.success(Unit))}
+                    is Event.ConfigureCapture -> {configureCapture(event);event.reply.complete(Result.success(Unit))}
                     is Event.DeletePhoto -> active?.let {session->event.reply.complete(runCatching {deletePhoto(session,event.observationId)})}
                         ?: event.reply.complete(Result.failure(IllegalStateException("NO_ACTIVE_SESSION")))
                     is Event.AutoCapture -> active?.let {session->session.automaticCapture=event.enabled
@@ -223,6 +235,7 @@ class StudyRuntimeEngine(
                     // blank note from the context picker did, by failing validation on the way in.
                     is Event.EvaluatePhoto -> event.reply.complete(Result.failure(error))
                     is Event.EvaluateContext -> event.reply.complete(Result.failure(error))
+                    is Event.ConfigureCapture -> event.reply.complete(Result.failure(error))
                     is Event.Prepared -> {
                         startingReply?.complete(Result.failure(error));startingReply=null
                         active?.let {runCatching {journal.stop(it.id,System.currentTimeMillis())}}
@@ -276,6 +289,16 @@ class StudyRuntimeEngine(
     /** Turns the forced-service prompt on or off for the running session. */
     suspend fun setForceService(enabled: Boolean): Result<Unit> {
         val reply=CompletableDeferred<Result<Unit>>();inbox.send(Event.SetForceService(enabled,reply));return reply.await()
+    }
+    /**
+     * Applies camera cadence, the batch an automatic upload goes out in, and CVTT enablement while a
+     * session is running. All three are capture settings, and they are the same set in both modes; only
+     * what the phone does with a frame differs.
+     */
+    suspend fun configureCapture(captureIntervalMs: Long,frontEndEnabled: Boolean,syncBatchSize: Int=_state.value.syncBatchSize): Result<Unit> {
+        val reply=CompletableDeferred<Result<Unit>>()
+        inbox.send(Event.ConfigureCapture(captureIntervalMs,frontEndEnabled,syncBatchSize,reply))
+        return reply.await()
     }
     fun stopSoon() {scope.launch {runCatching {stopSession()}}}
     private fun nextEpoch(): Long {
@@ -360,7 +383,7 @@ class StudyRuntimeEngine(
         active=session
         _state.update {it.copy(forceService=session.forceService)}
         val config=StudyWire.payload("profile" to session.setup.profile,"session_mode" to session.setup.mode.name,
-            "capture_interval_ms" to session.setup.captureIntervalMs,
+            "capture_interval_ms" to session.captureIntervalMs,"front_end_enabled" to session.frontEndEnabled,
             "glasses_capture" to session.setup.glassesCapture,"sync_batch_size" to session.setup.syncBatchSize,
             "inference_endpoint" to (session.setup.directModel?.resolvedEndpoint() ?: session.setup.endpoint),
             "connection_mode" to when {session.setup.mode==SessionMode.COLLECTION->"DISABLED_COLLECTION";session.contract?.mockMode=="local_scripted"->"LOCAL_MOCK";session.setup.directModel!=null->"DIRECT_API_KEY";else->"HARNESS"},
@@ -396,8 +419,9 @@ class StudyRuntimeEngine(
         _state.value=RuntimeViewState(phase="RUNNING",sessionId=session.id,scenario=session.scenario.title,
             replayEnabled=session.setup.replayEnabled,elapsedMs=session.setup.initialPositionMs,
             durationMs=session.timeline.durationMs,markers=session.timeline.markers,glassesDemoMode=session.demoMode,
-            shadowInference=session.setup.shadowInference,mode=session.setup.mode,captureIntervalMs=session.setup.captureIntervalMs,
+            shadowInference=session.setup.shadowInference,mode=session.setup.mode,captureIntervalMs=session.captureIntervalMs,
             glassesCapture=session.setup.glassesCapture,syncBatchSize=session.setup.syncBatchSize,
+            frontEndEnabled=session.frontEndEnabled,
             storageFreeBytes=context.filesDir.usableSpace)
         session.seed?.let {seed->
             val dataset=PublicReplayDataset {path->context.assets.open(PublicReplayDataset.ASSET_ROOT+path).use {it.readBytes()}}
@@ -567,7 +591,7 @@ class StudyRuntimeEngine(
         if(CaptureReason.PERIODIC_BASELINE in reasons) {
             session.lastBaseline=elapsed
             if(session.setup.mode==SessionMode.COLLECTION) session.nextCollectionCaptureElapsed=
-                nextFixedCaptureElapsed(session.zeroElapsed,session.setup.captureIntervalMs,elapsed)
+                nextFixedCaptureElapsed(session.zeroElapsed,session.captureIntervalMs,elapsed)
         }
         if(CaptureReason.DEADLINE_WINDOW in reasons) session.deadlineSeen+=session.episodes.allForAudit().map {it.episodeHandle}
         if(CaptureReason.ROUTINE_WINDOW in reasons) session.routineSeen+=session.episodes.allForAudit().map {it.episodeHandle}
@@ -589,7 +613,9 @@ class StudyRuntimeEngine(
                 _state.update {it.copy(bufferedPhotos=p.getValue("pending").jsonPrimitive.int,glassesCaptures=p.getValue("captured").jsonPrimitive.int,
                     glassesFreeBytes=p.getValue("free_bytes").jsonPrimitive.long,syncing=p.getValue("syncing").jsonPrimitive.boolean,
                     nextCaptureInMs=p.getValue("next_capture_in_ms").jsonPrimitive.long,error=p["error"]?.jsonPrimitive?.contentOrNull,
-                    automaticCapture=p.getValue("automatic").jsonPrimitive.boolean)}
+                    automaticCapture=p.getValue("automatic").jsonPrimitive.boolean,
+                    frontEndEnabled=p["front_end_enabled"]?.jsonPrimitive?.booleanOrNull ?: it.frontEndEnabled,
+                    frontEndVersion=p["front_end_version"]?.jsonPrimitive?.contentOrNull ?: it.frontEndVersion)}
                 if(session.stopping && p["automatic"]==JsonPrimitive(false) && p["capturing"]==JsonPrimitive(false) && p["pending"]==JsonPrimitive(0)) stop()
             }
             is RokidEvent.CaptureAcknowledged -> if(session.capture?.captureId==event.captureId && !session.captureAckReceived) {
@@ -695,11 +721,20 @@ class StudyRuntimeEngine(
         val roundTripMs=if(frame.buffered) frame.cameraDurationMs?.plus(frame.transferDurationMs ?: 0) else SystemClock.elapsedRealtime()-session.captureStartedElapsed
         if(pending?.captureId==frame.captureId) session.capture=null
         val quality=session.quality.analyze(frame)
+        // The verdict is taken before the observation is written, because the observation is where it is
+        // kept: the page marks every frame with what the front end made of it, months later included.
+        //
+        // It is taken on every frame, whatever the frame looks like. The front end is the frozen model and
+        // nothing else - a quality gate in front of it would be a second, unfrozen opinion about which
+        // pictures existed, and the rate it produces is a property of the release, measured over whole
+        // sessions. A dark or moving frame is a frame the model is allowed to have seen and to decline.
+        val verdict=if(session.setup.mode==SessionMode.SERVICE && session.setup.glassesCapture)
+            frontEndVerdict(session,frame) else JsonObject(emptyMap())
         val path=journal.image(session.id,frame.captureId,frame.jpegBytes,frame.sha256)
         val observation=ObservationRecord("obs-${frame.captureId}",ObservationKind.IMAGE,frame.capturedAtEpochMs,frame.receivedAtEpochMs,
             "Current egocentric image observation.",assetId="asset-${frame.sha256.take(16)}")
         session.history.append(observation)
-        appendObservation(session,observation,JsonObject(phoneCaptureMetadata(context)+frame.sourceMetadata+StudyWire.payload("local_relative_path" to path,"sha256" to frame.sha256,"width" to frame.width,"height" to frame.height,
+        appendObservation(session,observation,JsonObject(phoneCaptureMetadata(context)+frame.sourceMetadata+verdict+StudyWire.payload("local_relative_path" to path,"sha256" to frame.sha256,"width" to frame.width,"height" to frame.height,
             "buffered_sync" to frame.buffered,"location_relation" to "PHONE_RECEIVE_TIME",
             "byte_length" to frame.jpegBytes.size,"camera_duration_ms" to frame.cameraDurationMs,"transfer_duration_ms" to frame.transferDurationMs,"capture_round_trip_ms" to roundTripMs,
             "rotation_degrees" to frame.rotationDegrees,"quality_valid" to quality.valid,"quality_status" to quality.status.name,
@@ -718,21 +753,62 @@ class StudyRuntimeEngine(
         if(!quality.valid) {
             val code=when(quality.status) {ImageQualityStatus.TOO_DARK->"IMAGE_TOO_DARK";ImageQualityStatus.TOO_BRIGHT->"IMAGE_TOO_BRIGHT";
                 ImageQualityStatus.BLURRY->"IMAGE_TOO_BLURRY";else->"IMAGE_CORRUPTED"}
-            if(session.captureRetry<1) {session.captureRetry++;capture(session,setOf(CaptureReason.QUALITY_RETRY))}
-            else {session.captureRetry=0;_state.update {it.copy(error=code)}}
+            // A collection is material to seed a session from, so a frame it cannot use is re-taken and
+            // counted. A service session is not collecting: the frame is kept, evaluated by the front end
+            // like any other, and the measurement is recorded - asking for a second shot because the first
+            // was dark is exactly the gate the front end does not have.
+            if(session.setup.mode==SessionMode.COLLECTION || !session.setup.glassesCapture) {
+                if(session.captureRetry<1) {session.captureRetry++;capture(session,setOf(CaptureReason.QUALITY_RETRY))}
+                else {session.captureRetry=0;_state.update {it.copy(error=code)}}
+                _state.update {it.copy(observationStatus=code)}
+                updatePhase(session);return
+            }
             _state.update {it.copy(observationStatus=code)}
-            updatePhase(session);return
         }
         session.captureRetry=0
         session.latestFrame=frame;session.latestQuality=quality
         if(session.setup.mode==SessionMode.COLLECTION) _state.update {it.copy(observationStatus="IMAGE_SAVED")}
         if(session.setup.glassesCapture && session.setup.mode==SessionMode.SERVICE) {
-            val triggers=frame.sourceMetadata["trigger_types"]?.jsonArray?.map {it.jsonPrimitive.content}?.toSet() ?: setOf("MANUAL")
+            // What makes this frame worth a model call: the front end fired on it, or a context arrived
+            // since the last one, or the operator asked for it by taking the photograph themselves.
+            val fired=verdict["trigger_types"]?.jsonArray?.mapNotNull {it.jsonPrimitive.contentOrNull}.orEmpty().toSet()
+            val manual=frame.sourceMetadata["trigger_types"]?.jsonArray?.any {it.jsonPrimitive.contentOrNull=="MANUAL"}==true
+            val triggers=buildSet {
+                addAll(fired)
+                if(manual) add("MANUAL")
+                if(session.digitalPending) add("DIGITAL")
+            }
+            session.digitalPending=false
             if(triggers.isNotEmpty()) recordPackets(session,listOf(ObservationPacket("edge-${frame.captureId}",frame.receivedAtEpochMs,triggers,
                 listOf(observation.observationId),listOf(requireNotNull(observation.assetId)),emptyList(),frame.receivedAtEpochMs-frame.capturedAtEpochMs,false)))
         } else if(session.setup.mode==SessionMode.SERVICE) recordPackets(session,session.packets.onImage(observation.observationId,requireNotNull(observation.assetId),frame.receivedAtEpochMs,
             VisualSignatureExtractor.fromJpeg(frame.jpegBytes)))
         kickModel(session);updatePhase(session)
+    }
+    /**
+     * Runs the visual front end on one frame.
+     *
+     * It used to run on the glasses, before the upload, to keep frames off the link. It runs here now: a
+     * service session uploads every shot it takes, and this is what decides which of them are worth a
+     * model call. A frame it declines is still kept, counted and drawn - it is the record of what the
+     * wearer passed in front of, and the mark on it says the front end looked and said no. A frame the
+     * front end never saw - because it was unreadable, or because the operator switched it off - says
+     * that instead of pretending to a verdict.
+     */
+    private fun frontEndVerdict(session: Session,frame: ImageFrame): JsonObject {
+        if(!session.frontEndEnabled) return StudyWire.payload("front_end" to "DISABLED")
+        val frontEnd=session.frontEnd ?: runCatching {CvttFrontEnd(context)}.getOrElse {error->
+            session.frontEndEnabled=false
+            _state.update {it.copy(frontEndEnabled=false,error="CVTT_${error.javaClass.simpleName}")}
+            return StudyWire.payload("front_end" to "DISABLED")
+        }.also {session.frontEnd=it;_state.update {state->state.copy(frontEndVersion=CvttFrontEnd.VERSION)}}
+        val decision=runCatching {frontEnd.observe(frame.jpegBytes,SystemClock.elapsedRealtime())}.getOrElse {error->
+            _state.update {it.copy(error="CVTT_${error.javaClass.simpleName}")}
+            return StudyWire.payload("front_end" to "DISABLED")
+        }
+        return StudyWire.payload("front_end" to CvttFrontEnd.VERSION,"front_end_score" to decision.score,
+            "front_end_seed_scores" to JsonArray(decision.seedScores.map {JsonPrimitive(it)}),
+            "trigger_types" to JsonArray(if(decision.fired) listOfNotNull(decision.reason).map(::JsonPrimitive) else emptyList()))
     }
     private fun kickModel(session: Session) {
         if(session.setup.mode!=SessionMode.SERVICE) return
@@ -773,7 +849,9 @@ class StudyRuntimeEngine(
             "service_mode" to response.serviceMode?.name,"title" to response.title,"body" to response.body,
             "produced_at_epoch_ms" to response.producedAtEpochMs,"expires_at_epoch_ms" to response.expiresAtEpochMs,"model_latency_ms" to event.latencyMs),now)
         val verdict=DeliveryPolicy.evaluate(event.pending.request,response,event.pending.episode,session.packetEpisodes[event.pending.episode.episodeHandle],
-            session.id,session.epoch,session.id,session.epoch,now,session.receipts,session.serviceVisible || session.delivery!=null)
+            session.id,session.epoch,session.id,session.epoch,now,session.receipts,session.serviceVisible || session.delivery!=null,
+            DeliveryPolicy.groundingFor(event.pending.request),
+            if(session.forceService) DeliveryPolicy.Mode.FORCED_DEMO else DeliveryPolicy.Mode.PRODUCTION)
         _state.update {it.copy(decisions=it.decisions+1,rawDecision=response.decision.name,delivery=verdict.status.name,error=null)}
         if(verdict.status==DeliveryPolicy.Status.DELIVER && session.setup.shadowInference) {
             delivery(session,response.decisionId,"NOT_ATTEMPTED","SHADOW_INFERENCE",now)
@@ -792,6 +870,7 @@ class StudyRuntimeEngine(
                 DeliveryPolicy.Status.NO_SERVICE->"NO_SERVICE_SILENCE"
                 DeliveryPolicy.Status.SUPPRESS_DUPLICATE->"SUPPRESSED_BY_RECEIPT"
                 DeliveryPolicy.Status.SUPPRESS_INVALID_EVIDENCE->"INVALID_EVIDENCE"
+                DeliveryPolicy.Status.SUPPRESS_UNGROUNDED->"UNGROUNDED"
                 DeliveryPolicy.Status.SUPPRESS_STALE->"STALE_DECISION"
                 else->"NOT_ATTEMPTED"
             }
@@ -980,7 +1059,7 @@ class StudyRuntimeEngine(
             episodeHandle=handle,materialRevision=candidate.materialRevision)
         session.history.append(observation)
         appendObservation(session,observation,StudyWire.payload("source" to "OPERATOR_SYNTHETIC","synthetic_type" to input.type.name))
-        if(session.setup.glassesCapture) transport.command(transport.controlMessage("EDGE_DIGITAL_EVENT",StudyWire.payload("event_id" to observation.observationId))).getOrThrow()
+        if(session.setup.glassesCapture) session.digitalPending=true
         else recordPackets(session,session.packets.onDigital(observation.observationId,observation.availableAtEpochMs))
         journal.append(session.id,"context_events","OPERATOR_CONTEXT_ADDED",StudyWire.payload("observation" to observationJson(observation),
             "synthetic_type" to input.type.name,"title" to input.title,"show_on_glasses" to input.showOnGlasses),now)
@@ -1017,7 +1096,7 @@ class StudyRuntimeEngine(
             state.error=="IMAGE_TOO_DARK"->"画面偏暗 · 请调整镜头";state.error=="IMAGE_TOO_BLURRY"->"画面不清晰 · 请保持稳定";state.error=="IMAGE_TOO_BRIGHT"->"画面过亮 · 请调整镜头";else->"实时服务中"}
         val payload=if(!enabled) StudyWire.payload("enabled" to false) else StudyWire.payload("enabled" to true,"phase" to phase,"context" to (state.currentContext ?: "等待新的情境").take(140),
             "captures" to state.liveCaptures,"receipts" to state.receipts,"automatic_capture" to session.automaticCapture,
-            "collection" to collection,"interval_seconds" to session.setup.captureIntervalMs/1000)
+            "collection" to collection,"interval_seconds" to session.captureIntervalMs/1000)
         if(payload.toString()==session.lastDemoStatus) return
         if(transport.command(transport.controlMessage("UPDATE_DEMO_STATUS",payload)).isSuccess) session.lastDemoStatus=if(enabled) payload.toString() else "DISABLED"
     }
@@ -1029,8 +1108,25 @@ class StudyRuntimeEngine(
     private suspend fun configureGlasses(session: Session) {
         if(!session.setup.glassesCapture || !transport.ready.value) return
         transport.command(transport.controlMessage("CONFIGURE_CAPTURE",StudyWire.payload("mode" to session.setup.mode.name,
-            "interval_ms" to if(session.setup.mode==SessionMode.COLLECTION) session.setup.captureIntervalMs else 60_000,
-            "batch_size" to session.setup.syncBatchSize,"automatic" to (session.automaticCapture && !session.stopping && !session.paused)))).getOrThrow()
+            "interval_ms" to session.captureIntervalMs,"batch_size" to session.syncBatchSize,
+            "automatic" to (session.automaticCapture && !session.stopping && !session.paused)))).getOrThrow()
+    }
+    private suspend fun configureCapture(event: Event.ConfigureCapture) {
+        val session=requireNotNull(active) {"NO_ACTIVE_SESSION"}
+        require(event.captureIntervalMs in 5_000..3_600_000) {"CAPTURE_INTERVAL_INVALID"}
+        require(event.syncBatchSize in 1..500) {"SYNC_BATCH_SIZE_INVALID"}
+        session.captureIntervalMs=event.captureIntervalMs
+        session.frontEndEnabled=event.frontEndEnabled
+        session.syncBatchSize=event.syncBatchSize
+        // A changed cadence starts a fresh interval rather than emitting an old overdue timer.
+        session.nextCollectionCaptureElapsed=SystemClock.elapsedRealtime()+event.captureIntervalMs
+        journal.append(session.id,"runtime_events","CAPTURE_CONFIGURATION_CHANGED",StudyWire.payload(
+            "capture_interval_ms" to event.captureIntervalMs,
+            "front_end_enabled" to event.frontEndEnabled,"sync_batch_size" to event.syncBatchSize),System.currentTimeMillis())
+        _state.update {it.copy(captureIntervalMs=event.captureIntervalMs,
+            frontEndEnabled=event.frontEndEnabled,syncBatchSize=event.syncBatchSize)}
+        configureGlasses(session)
+        sendDemoStatus(session);checkpoint(session)
     }
     private suspend fun requestStop() {
         val session=active
@@ -1089,7 +1185,8 @@ class StudyRuntimeEngine(
         "replay_position_ms" to session.position(SystemClock.elapsedRealtime()),
         "phone_build" to phoneBuild,"glasses_build" to session.peerBuild?.let {StudyWire.json.encodeToJsonElement(it)},
         "glasses_app_version" to session.peerBuild?.appVersion,
-        "session_mode" to session.setup.mode.name,"capture_interval_ms" to session.setup.captureIntervalMs,
+        "session_mode" to session.setup.mode.name,"capture_interval_ms" to session.captureIntervalMs,
+        "front_end_enabled" to session.frontEndEnabled,
         "contract" to session.contract?.let {StudyWire.json.encodeToJsonElement(it)}),System.currentTimeMillis())}
     private fun appendObservation(session: Session,record: ObservationRecord,extra: JsonObject=JsonObject(emptyMap())) {
         journal.append(session.id,"observations","OBSERVATION_PERSISTED",JsonObject(observationJson(record)+extra),record.availableAtEpochMs)
@@ -1114,12 +1211,17 @@ class StudyRuntimeEngine(
             session.packetEpisodes[episode.episodeHandle]=episode
             val evaluation=PacketEvaluation(packet.packetId,packet.cutoffEpochMs,packet.newEventIds.lastOrNull() ?: "heartbeat",
                 packet.imageIds.last(),packet.triggerTypes)
-            val retrieved=(session.history.historyRetrievalSnapshot(packet.cutoffEpochMs,packet.newEventIds,pinnedIds=session.historyContextIds) +
-                session.history.causalSnapshot(packet.cutoffEpochMs).filter {it.assetId==packet.imageIds.last()})
+            val (workingSet,trace)=session.history.historyRetrievalDetailed(packet.cutoffEpochMs,packet.newEventIds,pinnedIds=session.historyContextIds)
+            val retrieved=(workingSet + session.history.causalSnapshot(packet.cutoffEpochMs).filter {it.assetId==packet.imageIds.last()})
                 .distinctBy {it.observationId}.sortedBy {it.availableAtEpochMs}
+            // What the model was given out of the record decides what it could possibly say, so the tiers
+            // are recorded: a run that served on nothing has to be readable back to its own working set.
             journal.append(session.id,"runtime_events","HISTORY_RETRIEVAL",StudyWire.payload("packet_id" to packet.packetId,
                 "new_event_ids" to JsonArray(packet.newEventIds.map(::JsonPrimitive)),
-                "injected_observation_ids" to JsonArray(retrieved.map {JsonPrimitive(it.observationId)}),"injected_count" to retrieved.size),packet.cutoffEpochMs)
+                "injected_observation_ids" to JsonArray(retrieved.map {JsonPrimitive(it.observationId)}),"injected_count" to retrieved.size,
+                "query_terms" to JsonArray(trace.queryTerms.map(::JsonPrimitive)),"exact_count" to trace.exactIds.size,
+                "recent_count" to trace.recentIds.size,"retrieved_count" to trace.retrievedIds.size,
+                "pinned_count" to trace.pinnedIds.size,"historical_image_count" to trace.historicalImageIds.size),packet.cutoffEpochMs)
             val contract=requireNotNull(session.contract)
             val request=InferenceContract.buildPacketRequest("request-${UUID.randomUUID()}",evaluation,quality,retrieved,session.receipts.allReceipts(),
                 contract.promptHash,contract.preprocessHash,contract.modelId,contract.parserHash,contract.protocolVersion,
@@ -1148,5 +1250,6 @@ class StudyRuntimeEngine(
     private fun receiptJson(receipt: ActionReceipt,frames: Int,anchor: String)=StudyWire.payload("receipt_id" to receipt.receiptId,"decision_id" to receipt.decisionId,
         "episode_handle" to receipt.episodeHandle,"object_handle" to receipt.objectHandle,"intent_fingerprint" to receipt.intentFingerprint,
         "service_mode" to receipt.serviceMode.name,"served_material_revision" to receipt.servedMaterialRevision,"visible_at_epoch_ms" to receipt.visibleAtEpochMs,
-        "evidence_observation_ids" to JsonArray(receipt.evidenceObservationIds.map(::JsonPrimitive)),"visible_ack_frame_count" to frames,"packet_id" to anchor)
+        "evidence_observation_ids" to JsonArray(receipt.evidenceObservationIds.map(::JsonPrimitive)),"visible_ack_frame_count" to frames,"packet_id" to anchor,
+        "title" to receipt.title,"body" to receipt.body)
 }

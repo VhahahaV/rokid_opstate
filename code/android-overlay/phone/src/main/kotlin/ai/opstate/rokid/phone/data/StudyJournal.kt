@@ -205,11 +205,9 @@ class StudyJournal(private val context: Context,val database: StudyDatabase) {
      * place, so the record stays exportable.
      */
     @Synchronized fun addSyntheticContext(id: String,type: String,title: String,body: String,atEpochMs: Long): String {
-        require(type in setOf("EMAIL","CALENDAR","MESSAGE","NOTE")) { "CONTEXT_INPUT_INVALID" }
+        val text=syntheticContextText(type,title,body)
         val trimmedTitle=title.trim();val trimmedBody=body.trim()
-        require(trimmedTitle.isNotEmpty() && trimmedTitle.length<=80 && trimmedBody.length<=4000) { "CONTEXT_INPUT_INVALID" }
         val session=requireNotNull(dao.session(id)) { "UNKNOWN_SESSION" }
-        val text="[$type] $trimmedTitle\n$trimmedBody"
         val eventId="manual-${UUID.randomUUID()}"
         database.runInTransaction {
             // Same shape the runtime writes for every observation, so the readers that later rebuild a
@@ -288,6 +286,80 @@ class StudyJournal(private val context: Context,val database: StudyDatabase) {
         if(!shared) runCatching {localImage(id,path).delete()}
         return payload
     }
+
+    /**
+     * The context notes an operator has withdrawn, and every copy of them in this record.
+     *
+     * The same shape as [deletedPhotoObservations] for the same reason: the chain is append-only, so a
+     * note leaves the record through a later event naming it rather than by a row going away. Every
+     * reader that draws notes subtracts this set.
+     */
+    fun retractedContextObservations(id: String): Set<String> = dao.contextRetractions(id).flatMap {event->
+        StudyWire.json.parseToJsonElement(event.canonicalJson).jsonObject["observation_ids"]?.jsonArray.orEmpty()
+    }.mapNotNull {it.jsonPrimitive.contentOrNull}.toSet()
+
+    /** Whether the record still holds a live note with that ledger key - one the timeline would draw. */
+    fun hasSyntheticContext(id: String,type: String,title: String,body: String,atEpochMs: Long): Boolean {
+        val key=ContextFactKey(atEpochMs,syntheticContextText(type,title,body))
+        val withdrawn=retractedContextObservations(id)
+        return contextObservationRows(id).any {row->
+            contextObservationKey(row)==key && row["observation_id"]?.jsonPrimitive?.contentOrNull?.let {it !in withdrawn}==true
+        }
+    }
+
+    /**
+     * Withdraws a note the ledger no longer wants, named the way the ledger writes it.
+     *
+     * A merge copies a note into every record that imported the history it came from, so one ledger
+     * line stands for several rows in a merged record - all of them carry the same occurrence time and
+     * text. The one tombstone therefore names every copy it found, and the readers subtract them
+     * together. Only ids are named, never the key: a rewritten line that keeps the same clock time is a
+     * different row and is not withdrawn by the tombstone that withdrew its predecessor.
+     *
+     * The rows are the authority on what this record holds, not the caller - a ledger line naming a
+     * note this record never had withdraws nothing and says so by returning null. Returns what it
+     * matched, and appends nothing when every copy was already withdrawn, so re-running the same file
+     * does not grow the chain.
+     */
+    @Synchronized fun retractSyntheticContext(id: String,type: String,title: String,body: String,atEpochMs: Long,
+        reason: String?=null,now: Long): ContextRetraction? {
+        val session=requireNotNull(dao.session(id)) {"UNKNOWN_SESSION"}
+        val key=ContextFactKey(atEpochMs,syntheticContextText(type,title,body))
+        val held=contextObservationRows(id).filter {contextObservationKey(it)==key}
+            .mapNotNull {it["observation_id"]?.jsonPrimitive?.contentOrNull}
+        if(held.isEmpty()) return null
+        val withdrawn=retractedContextObservations(id)
+        val fresh=held.filterNot {it in withdrawn}
+        if(fresh.isEmpty()) return ContextRetraction(emptyList(),held)
+        val trimmedReason=reason?.trim()?.take(200)?.takeIf {it.isNotEmpty()}
+        val payload=StudyWire.payload(
+            // `event` is redundant with the journal column, and it is here on purpose: an export writes
+            // payloads only, so without it the archived trace could not say which rows are retractions.
+            "event" to "CONTEXT_RETRACTED","observation_ids" to JsonArray(fresh.map(::JsonPrimitive)),
+            "count" to fresh.size,"synthetic_type" to type,"title" to title.trim(),"body" to body.trim(),
+            "occurred_at_epoch_ms" to atEpochMs,"retracted_at_epoch_ms" to now,
+            "retracted_during_session" to (session.endedAtEpochMs==null),"source" to "OPERATOR_RETRACT")
+        val tombstone=trimmedReason?.let {JsonObject(payload+StudyWire.payload("reason" to it))} ?: payload
+        database.runInTransaction {append(id,"runtime_events","CONTEXT_RETRACTED",tombstone,now)}
+        return ContextRetraction(fresh,held-fresh.toSet())
+    }
+
+    /**
+     * The text a note is written with, and the words it is checked against.
+     *
+     * One definition for both directions, because the retractor looks a note up by the text the writer
+     * produced: two copies of that rule would drift and withdraw nothing, silently.
+     */
+    private fun syntheticContextText(type: String,title: String,body: String): String {
+        require(type in setOf("EMAIL","CALENDAR","MESSAGE","NOTE")) { "CONTEXT_INPUT_INVALID" }
+        val trimmedTitle=title.trim();val trimmedBody=body.trim()
+        require(trimmedTitle.isNotEmpty() && trimmedTitle.length<=80 && trimmedBody.length<=4000) { "CONTEXT_INPUT_INVALID" }
+        return "[$type] $trimmedTitle\n$trimmedBody"
+    }
+
+    private fun contextObservationRows(id: String): List<JsonObject> =
+        dao.stream(id,"observations").map {StudyWire.json.parseToJsonElement(it.canonicalJson).jsonObject}
+            .filter {it["kind"]==JsonPrimitive("SYNTHETIC_CONTEXT")}
 
     /** The name a record is listed under is `participantAlias`; the audit chain stores no alias, so
      *  renaming cannot invalidate it. */
@@ -415,3 +487,26 @@ class StudyJournal(private val context: Context,val database: StudyDatabase) {
         }
     }
 }
+
+/** What one retraction did: the notes it withdrew now, and the ones already withdrawn before it ran. */
+data class ContextRetraction(val retracted: List<String>,val alreadyRetracted: List<String>) {
+    val matched get()=retracted.size+alreadyRetracted.size
+}
+
+/** A context note as its ledger line names it: when it happened, and the text it was written with. */
+data class ContextFactKey(val occurredAtEpochMs: Long,val text: String)
+
+/**
+ * The identity of a context note inside one record.
+ *
+ * A merge copies a note into every record that had imported the history it came from, and the copies
+ * keep the occurrence time and the text. Which field holds that text depends on the writer - the dialog
+ * and the importer write `content` and `public_text`, a record seeded from another carries `content`
+ * alone, and the imported public history carries `public_text` alone - so the pair, read from whichever
+ * field is there, is what says "this is the same note". Both readers that need it use this one
+ * definition: the record page, to draw a merged record once per fact, and the history reader, to seed a
+ * session from one.
+ */
+fun contextObservationKey(row: JsonObject): ContextFactKey = ContextFactKey(
+    row["occurred_at_epoch_ms"]?.jsonPrimitive?.longOrNull ?: 0L,
+    row["content"]?.jsonPrimitive?.contentOrNull ?: row["public_text"]?.jsonPrimitive?.contentOrNull ?: "")

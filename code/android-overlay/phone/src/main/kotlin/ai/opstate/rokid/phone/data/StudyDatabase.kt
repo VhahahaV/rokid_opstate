@@ -60,6 +60,8 @@ interface StudyDao {
     fun imageForAsset(id: String,assetId: String): JournalEntity?
     @Query("SELECT * FROM journal WHERE sessionId=:id AND stream='runtime_events' AND eventType='PHOTO_DELETED' ORDER BY sequence")
     fun photoDeletions(id: String): List<JournalEntity>
+    @Query("SELECT * FROM journal WHERE sessionId=:id AND stream='runtime_events' AND eventType='CONTEXT_RETRACTED' ORDER BY sequence")
+    fun contextRetractions(id: String): List<JournalEntity>
     @Query("SELECT stream, COUNT(*) AS count FROM journal WHERE sessionId=:id GROUP BY stream")
     fun counts(id: String): List<StreamCount>
     @Query("SELECT * FROM journal WHERE sessionId=:id ORDER BY sequence DESC LIMIT :limit") fun observeJournal(id: String,limit: Int=100): Flow<List<JournalEntity>>

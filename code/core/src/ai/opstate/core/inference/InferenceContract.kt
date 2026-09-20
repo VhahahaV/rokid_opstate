@@ -30,6 +30,9 @@ data class ModelActionReceipt(
     val servedMaterialRevision: Long,
     val evidenceObservationIds: Set<String>,
     val visibleAckFrameCount: Int = 2,
+    /** What the card said, so the model can tell whether it is about to say it again. */
+    val title: String? = null,
+    val body: String? = null,
 )
 
 data class InferenceRequest(
@@ -75,7 +78,7 @@ object InferenceContract {
         }
         val modelReceipts=receipts.filter {it.visibleAtEpochMs<=packet.snapshotAtEpochMs}.map {
             ModelActionReceipt(it.receiptId,it.decisionId,it.episodeHandle,it.objectHandle,it.intentFingerprint,it.serviceMode,it.visibleAtEpochMs,
-                it.servedMaterialRevision,it.evidenceObservationIds)
+                it.servedMaterialRevision,it.evidenceObservationIds,title=it.title,body=it.body)
         }
         return InferenceRequest(protocolVersion,requestId,packet.packetId,packet.snapshotAtEpochMs,packet.currentAssetId,image.sha256,
             ModelCandidate("stream","stream-${packet.packetId}"),observations,modelReceipts,promptHash,preprocessHash,modelId,parserHash,
@@ -135,6 +138,8 @@ object InferenceContract {
                     visibleAtEpochMs = it.visibleAtEpochMs,
                     servedMaterialRevision = it.servedMaterialRevision,
                     evidenceObservationIds = it.evidenceObservationIds,
+                    title = it.title,
+                    body = it.body,
                 )
             },
             promptHash = promptHash,

@@ -72,8 +72,17 @@ internal fun photoTime(at: Long,pattern: String="MM月dd日 HH:mm:ss")=if(at>0) 
         if(photo.served) Surface(Modifier.align(Alignment.TopStart).padding(4.dp),color=Success,shape=RoundedCornerShape(4.dp)) {
             Text("主动服务",style=MaterialTheme.typography.labelSmall,color=Color.White,modifier=Modifier.padding(horizontal=5.dp,vertical=2.dp))
         }
+        // The corner opposite the service mark says what the glasses' own front end decided about this
+        // frame: it looked at every shot, so for a live frame the answer is either 触发 or 未触发, and a
+        // frame with no verdict at all says that instead of pretending to one. A history frame carries no
+        // verdict, and the mark it needs is the one that says it came from an earlier record.
         if(photo.historical) Text("历史",style=MaterialTheme.typography.labelSmall,color=Color.White,
             modifier=Modifier.align(Alignment.TopEnd).background(Ink.copy(alpha=.75f)).padding(4.dp))
+        else Surface(Modifier.align(Alignment.TopEnd).padding(4.dp),
+            color=if(photo.triggered) Success else Quiet,shape=RoundedCornerShape(4.dp)) {
+            Text(photo.triggerLabel,style=MaterialTheme.typography.labelSmall,color=Color.White,
+                modifier=Modifier.padding(horizontal=5.dp,vertical=2.dp))
+        }
     }
 }
 
@@ -227,6 +236,19 @@ internal fun LazyListScope.timeline(items: List<TimelineItem>,open: (String)->Un
                             "VALID"->"可用";"TOO_DARK"->"光线偏暗";"TOO_BRIGHT"->"曝光偏亮";"BLURRY"->"画面模糊"
                             else->if(metadata["quality_valid"]?.jsonPrimitive?.booleanOrNull==true) "可用" else "未评估"
                         })
+                        HorizontalDivider(color=Line)
+                        // What the glasses' front end decided, which is how a frame came to be evaluated or
+                        // not. It travels with the picture, so a review read months later can still say it.
+                        Text("眼镜前端判定",style=MaterialTheme.typography.titleMedium)
+                        SettingRow("判定结果",photo.triggerLabel)
+                        photo.frontEnd?.let {SettingRow("前端版本",it)}
+                        photo.frontEndScore?.let {SettingRow("触发分数",String.format(Locale.CHINA,"%.3f",it))}
+                        if(photo.triggers.isNotEmpty()) SettingRow("触发类型",photo.triggers.joinToString("、"))
+                        if(!photo.frontEndDecided) Text("这张没有前端判定：来自导入的历史记录，或拍摄时前端未启用。",
+                            style=MaterialTheme.typography.bodySmall,color=Quiet)
+                        photo.metadata["buffered_sync"]?.jsonPrimitive?.booleanOrNull?.let {
+                            Text("眼镜本地保存后批量同步上来的。",style=MaterialTheme.typography.bodySmall,color=Quiet)
+                        }
                         HorizontalDivider(color=Line)
                         Text("手机接收时的位置",style=MaterialTheme.typography.titleMedium)
                         val location=metadata["phone_location"] as? JsonObject

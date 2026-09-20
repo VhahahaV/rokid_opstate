@@ -31,9 +31,13 @@ class RealHardwareLoopDeviceTest {
         override suspend fun contract(expectedModelId: String?)=frozen
         override suspend fun evaluate(request: InferenceRequest,jpeg: ByteArray,onRaw: (RawHarnessResponse)->Unit): InferenceResponse {
             val now=System.currentTimeMillis()
+            // The card names the candidate it answers and its revision, as a real one would: a card is
+            // about a situation, and a fixture that answered every situation with the same sentence would
+            // be indistinguishable from a model repeating itself - which the delivery gate now refuses.
+            val revision=request.observations.mapNotNull {it.materialRevision}.maxOrNull() ?: 0L
             val response=InferenceResponse(request.requestId,"decision-${UUID.randomUUID()}",label,
                 if(label==DecisionLabel.SERVICE) ServiceMode.PREPARATION else null,if(label==DecisionLabel.SERVICE) "设备闭环验证" else null,
-                if(label==DecisionLabel.SERVICE) "这是一条模拟研究服务，用于验证真实显示与可见回执。" else null,
+                if(label==DecisionLabel.SERVICE) "这是一条模拟研究服务，用于验证真实显示与可见回执。${request.candidate.episodeHandle} 修订 $revision。" else null,
                 setOf(request.observations.last {it.assetId==request.currentAssetId}.observationId),now,now+20000)
             val body=StudyWire.payload("request_id" to response.requestId,"decision_id" to response.decisionId,"decision" to label.name,
                 "service" to if(label==DecisionLabel.SERVICE) StudyWire.payload("mode" to response.serviceMode!!.name,"title" to response.title,"body" to response.body) else JsonNull,

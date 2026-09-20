@@ -89,6 +89,8 @@ data class OperatorActions(
     val startReplay: (Int)->Unit,val stopReplay: ()->Unit,val openSessionId: (String)->Unit,
     val start: (SessionLaunchOptions)->Unit,val pause: ()->Unit,val resume: ()->Unit,val stop: ()->Unit,val capture: ()->Unit,val seek: (Long)->Unit,
     val automaticCapture: (Boolean)->Unit,val demoMode: (Boolean)->Unit,
+    /** Camera cadence, batch size for automatic uploads, front end. */
+    val configureCapture: (Long,Boolean,Int)->Unit={_,_,_->},
     val addContext: (SyntheticContextInput,()->Unit)->Unit,
     /** Run the chain on evidence the operator picks instead of on a fresh capture. */
     val pickPhoto: ()->Unit={},val pickContext: ()->Unit={},val forceService: (Boolean)->Unit={},
@@ -190,7 +192,14 @@ data class OperatorActions(
                     PrimaryButton(if(state.peerReady) "完成，去采集" else if(state.busy) "正在连接…" else if(state.sdkIdentityCached) "连接我的眼镜" else "查找眼镜",!state.busy) {
                         if(state.peerReady) connection=false else if(state.sdkIdentityCached) actions.reconnect() else actions.scan()
                     }
-                    if(!state.peerReady && state.sdkIdentityCached) TextButton(onClick=actions.scan,enabled=!state.busy) {Text("查找其他眼镜")}
+                    // Two ways in, and the second one is the one that matters after a re-pairing. The
+                    // saved identity is what makes connecting free in the normal case; when the glasses
+                    // have paired with something else since, that identity is a socket nobody answers and
+                    // only a fresh lookup can replace it. The gesture below is the whole of it, and it is
+                    // the one thing the app cannot do for the wearer.
+                    if(!state.peerReady && state.sdkIdentityCached) TextButton(onClick=actions.scan,enabled=!state.busy) {Text("重新识别眼镜")}
+                    if(!state.peerReady && state.sdkIdentityCached) Text("眼镜和别的客户端重新配对过（比如 Rokid AI App）之后要用这一项：折叠镜腿 → 三击功能键，等眼镜进入可配对状态，再点「重新识别眼镜」。手机随后会记住新的连接信息，以后又是直接连接。",
+                        color=Quiet,style=MaterialTheme.typography.bodySmall)
                     state.link.errorCode?.let {Text(connectionError(it),color=MaterialTheme.colorScheme.error)}
                     if(state.peerReady) TextButton(onClick=actions.disconnect) {Text("断开眼镜")}
                     TextButton(onClick={advanced=!advanced}) {Text(if(advanced) "收起连接详情" else "连接遇到问题")}
@@ -372,15 +381,13 @@ data class OperatorActions(
                 // phone is that minus whatever the operator has taken out since.
                 Text("${runtime.liveCaptures-runtime.deletedCaptures} 张",fontSize=32.sp,fontWeight=FontWeight.Bold)
                 Column(horizontalAlignment=Alignment.End) {
-                    Text("手机已保存 · 眼镜待同步 ${runtime.bufferedPhotos} 张",color=Quiet,style=MaterialTheme.typography.bodySmall)
-                    Text("${playbackTime(runtime.elapsedMs)} · 每 ${runtime.captureIntervalMs/1000} 秒",color=Quiet,style=MaterialTheme.typography.bodySmall)
+                        Text("${playbackTime(runtime.elapsedMs)} · 每 ${runtime.captureIntervalMs/1000} 秒",color=Quiet,style=MaterialTheme.typography.bodySmall)
                 }
             }
             Row(horizontalArrangement=Arrangement.spacedBy(10.dp)) {
                 Button(onClick=if(runtime.phase=="PAUSED") actions.resume else actions.pause,enabled=!state.busy && state.peerReady && runtime.phase!="SYNCING",modifier=Modifier.weight(1f).heightIn(min=50.dp)) {Text(if(runtime.phase=="PAUSED") "继续采集" else "暂停")}
                 OutlinedButton(onClick=actions.stop,enabled=!state.busy && runtime.phase!="SYNCING",modifier=Modifier.weight(1f).heightIn(min=50.dp)) {Text("结束并同步")}
             }
-            if(runtime.glassesCapture) TextButton(actions.syncPhotos,enabled=state.peerReady && runtime.bufferedPhotos>0) {Text(if(runtime.syncing) "正在同步…" else "立即同步 · 每 ${runtime.syncBatchSize} 张自动同步")}
             Text("返回桌面或锁屏后继续采集；停止请点「结束并同步」。",color=Quiet,style=MaterialTheme.typography.bodySmall)
             if(!state.peerReady) Text("待同步张数为上次连接时的状态，重连后更新。",color=Quiet,style=MaterialTheme.typography.bodySmall)
             runtime.error?.let {Text(sessionError(it),color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)}
@@ -432,7 +439,7 @@ data class OperatorActions(
     HorizontalDivider(color=Line)
     if(runtime.mode==SessionMode.SERVICE) {
         SettingRow("最近模型决策",runtime.rawDecision ?: "尚未评估")
-        SettingRow("最近投递结果",when(runtime.delivery) {"DISPLAY_VISIBLE"->"已实际显示";"NO_SERVICE_SILENCE"->"保持沉默";"SUPPRESSED_BY_RECEIPT"->"重复服务已抑制";"STALE_DECISION"->"结果已过期";"DISPLAY_FAILED"->"未确认显示";null->"—";else->runtime.delivery.orEmpty()})
+        SettingRow("最近投递结果",when(runtime.delivery) {"DISPLAY_VISIBLE"->"已实际显示";"NO_SERVICE_SILENCE"->"保持沉默";"SUPPRESSED_BY_RECEIPT"->"重复服务已抑制";"UNGROUNDED"->"未落到记录上，未显示";"STALE_DECISION"->"结果已过期";"DISPLAY_FAILED"->"未确认显示";null->"—";else->runtime.delivery.orEmpty()})
     }
     runtime.error?.let {Text(sessionError(it),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)}
 } }
@@ -531,7 +538,7 @@ internal fun storageSize(bytes: Long): String=when {
 private fun connectionError(code: String)=when(code) {
     "CXR_CLIENT_SECRET_REQUIRED"->"尚未配置本应用的 Client Secret。"
     "CXR_SN_LICENSE_REQUIRED"->"尚未导入这副眼镜的 SN 授权文件。"
-    "CXR_SOCKET_CONNECT_FAILED"->"旧的应用连接信息已失效。请重新进入配对模式并扫描；下次连接会重新初始化。"
+    "CXR_SOCKET_CONNECT_FAILED"->"与眼镜的应用通道已失效：眼镜只要和别的客户端重新配对过，这段连接信息就会变。折叠镜腿 → 三击功能键让眼镜进入可配对状态，再点「重新识别眼镜」。"
     "CXR_OTHER_CLIENT_ACTIVE"->"应用通道正在被其他客户端使用。"
     "CXR_BLE_CONNECT_FAILED"->"BLE 初始化未成功，请确认眼镜正在广播配对状态。"
     "DEVICE_IDENTIFICATION_TIMEOUT"->"设备识别超时。请从官方 App 切换到本应用的配对模式后再试。"

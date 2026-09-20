@@ -9,6 +9,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.*
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
@@ -25,12 +26,25 @@ class AutomaticCaptureDeviceTest {
         assumeTrue("Explicit short edge-trigger hardware test only",InstrumentationRegistry.getArguments().getString("edge_trigger")=="true")
         val app=compose.activity.application as PhoneApplication
         app.storageReady.await()
-        val saved=app.link.savedDevice() ?: error("SELECT_STUDY_GLASSES_FIRST")
-        app.transport.connect(RokidDevice(saved.address,saved.name,true)).getOrThrow()
+        // The app reopens the saved glasses as it starts, and the instrumentation restarts it, so the
+        // handshake is given its time before this test opens a link of its own: a second connect while
+        // the first is still coming up is what the SDK refuses.
+        runCatching {withTimeout(45_000) {app.transport.ready.first {it}}}.onFailure {
+            val saved=app.link.savedDevice() ?: error("SELECT_STUDY_GLASSES_FIRST")
+            app.transport.connect(RokidDevice(saved.address,saved.name,true)).getOrThrow()
+            withTimeout(30_000) {app.transport.ready.first {it}}
+        }
         app.validationInferenceFactory={setup->if(setup.expectedModelId=="mock-on-device-v5") RealHardwareLoopDeviceTest.LocalModel(DecisionLabel.NO_SERVICE) else null}
         var id: String?=null
         try {
-            val setup=SessionSetup("TEST_EDGE_TRIGGER","local://scripted",expectedModelId="mock-on-device-v5",scenarioAsset="",glassesCapture=true)
+            // A short cadence for the same reason the batch test uses one, and now for a second reason:
+            // the glasses used to take a shot the moment a trigger was pending (`pendingTrigger.isNotEmpty()`
+            // in its capture condition), so a context produced its frame within seconds. The phone decides
+            // what a frame is worth now, and the glasses capture on the cadence alone - so the frame that
+            // carries the DIGITAL trigger is the next scheduled one, and waiting for it means waiting
+            // for the interval rather than for an event.
+            val setup=SessionSetup("TEST_EDGE_TRIGGER","local://scripted",expectedModelId="mock-on-device-v5",scenarioAsset="",
+                glassesCapture=true,captureIntervalMs=10_000)
             compose.runOnUiThread {compose.activity.startForegroundService(Intent(compose.activity,StudyRuntimeService::class.java).setAction(StudyRuntimeService.ACTION_START)
                 .putExtra("setup",StudyWire.json.encodeToString(SessionSetup.serializer(),setup)))}
             withTimeout(15_000) {while(app.studyRuntime.state.value.liveCaptures<1) delay(100)}
@@ -41,17 +55,83 @@ class AutomaticCaptureDeviceTest {
             assertEquals(1,app.studyRuntime.state.value.liveCaptures)
             withTimeout(25_000) {while(app.studyRuntime.state.value.liveCaptures<2 || app.journal.dao.stream(id,"decisions").size<2) delay(100)}
             val photos=app.journal.dao.stream(id,"observations").map {StudyWire.json.parseToJsonElement(it.canonicalJson).jsonObject}.filter {it["kind"]==JsonPrimitive("IMAGE")}
-            assertEquals(2,photos.size)
+            // Two frames were triggered, and they are the ones that reach the model. A frame nobody
+            // triggered may ride out in the same batch: the unit of an upload is the batch, not the
+            // trigger, which is why this counts the triggered ones rather than every photograph.
+            val triggered=photos.filter {(it["trigger_types"]?.jsonArray?.size ?: 0)>0}
+            assertEquals(2,triggered.size)
             assertTrue(photos.all {it["buffered_sync"]==JsonPrimitive(true) && it["asset_source"]==JsonPrimitive("LIVE_CAMERA")})
-            assertTrue(JsonPrimitive("VISUAL") in photos.first().getValue("trigger_types").jsonArray)
-            assertTrue(JsonPrimitive("DIGITAL") in photos.last().getValue("trigger_types").jsonArray)
+            // The verdict is the phone's now: the visual one carries the front end's own reason, and the
+            // one after a context carries the digital reason that context set.
+            val reasons=triggered.map {row->row.getValue("trigger_types").jsonArray.map {it.jsonPrimitive.content}}
+            assertTrue("a visual trigger should name the front end: $reasons",reasons.any {list->list.any {it.startsWith("CVTT_")}})
+            assertTrue("the context should have triggered one too: $reasons",reasons.any {list->list.contains("DIGITAL")})
             assertTrue(app.journal.dao.stream(id,"captures").none {it.eventType=="CAPTURE_REQUEST"})
             assertTrue(app.journal.dao.stream(id,"receipts").isEmpty())
             val directory=File(app.filesDir,"validation").apply {mkdirs()}
             File(directory,"edge-trigger-real-device.json").writeText(StudyWire.payload("status" to "PASS","session_id" to id,
                 "physical_camera_and_transport" to true,"trigger_location" to "GLASSES","model" to "LOCAL_SCRIPTED_MOCK",
-                "photos_uploaded" to photos.size,"triggers" to JsonArray(photos.map {it.getValue("trigger_types")}),
+                "photos_uploaded" to photos.size,"triggered_photos" to triggered.size,
+                "triggers" to JsonArray(triggered.map {it.getValue("trigger_types")}),
                 "phone_capture_requests" to 0,"receipts" to 0).toString())
+        } finally {
+            app.studyRuntime.stopSession();app.validationInferenceFactory=null
+            compose.runOnUiThread {compose.activity.stopService(Intent(compose.activity,StudyRuntimeService::class.java))}
+            withContext(Dispatchers.IO) {id?.let {runCatching {app.journal.delete(it)}}}
+        }
+    }
+    /**
+     * A service session uploads the frames it captured, in batches counted in images.
+     *
+     * This is the wearer's side of the report that a running service looked as if the glasses were not
+     * capturing at all: the glasses kept only the frames a trigger produced, dribbled them up one at a
+     * time, and the phone's page showed a photograph count that was mostly the history it had been
+     * seeded with. What is asserted here is the capture path a collection already had: every shot is
+     * kept, a batch of [SessionSetup.syncBatchSize] goes up together, and a frame nobody triggered is
+     * not evaluated - the front end is what decides that, and turning it off here is what proves the
+     * frames still arrive without it.
+     */
+    @Test fun serviceSessionUploadsItsCapturesInBatchesOfTheConfiguredCount()=runBlocking<Unit> {
+        assumeTrue("Explicit service-batch hardware test only",InstrumentationRegistry.getArguments().getString("service_batch")=="true")
+        val app=compose.activity.application as PhoneApplication
+        app.storageReady.await()
+        // The app reopens the saved glasses as it starts, and the instrumentation restarts it, so the
+        // handshake is given its time before this test opens a link of its own: a second connect while
+        // the first is still coming up is what the SDK refuses.
+        runCatching {withTimeout(45_000) {app.transport.ready.first {it}}}.onFailure {
+            val saved=app.link.savedDevice() ?: error("SELECT_STUDY_GLASSES_FIRST")
+            app.transport.connect(RokidDevice(saved.address,saved.name,true)).getOrThrow()
+            withTimeout(30_000) {app.transport.ready.first {it}}
+        }
+        app.validationInferenceFactory={setup->if(setup.expectedModelId=="mock-on-device-v5") RealHardwareLoopDeviceTest.LocalModel(DecisionLabel.NO_SERVICE) else null}
+        var id: String?=null
+        try {
+            // 5 s and a batch of 2 keep the check short; the front end is off so the frames under test are
+            // the plain captures and the cadence is one it was never asked to score.
+            val setup=SessionSetup("TEST_SERVICE_BATCH","local://scripted",expectedModelId="mock-on-device-v5",scenarioAsset="",
+                mode=SessionMode.SERVICE,captureIntervalMs=5_000,glassesCapture=true,syncBatchSize=2,frontEndEnabled=false)
+            compose.runOnUiThread {compose.activity.startForegroundService(Intent(compose.activity,StudyRuntimeService::class.java).setAction(StudyRuntimeService.ACTION_START)
+                .putExtra("setup",StudyWire.json.encodeToString(SessionSetup.serializer(),setup)))}
+            withTimeout(30_000) {while(app.studyRuntime.state.value.sessionId==null) delay(100)}
+            id=requireNotNull(app.studyRuntime.state.value.sessionId)
+            withTimeout(90_000) {while(app.journal.dao.stream(id,"observations")
+                .count {StudyWire.json.parseToJsonElement(it.canonicalJson).jsonObject["kind"]==JsonPrimitive("IMAGE")}<4) delay(200)}
+            val photos=app.journal.dao.stream(id,"observations").map {StudyWire.json.parseToJsonElement(it.canonicalJson).jsonObject}
+                .filter {it["kind"]==JsonPrimitive("IMAGE")}
+            val state=app.studyRuntime.state.value
+            assertTrue("the glasses captured at least what arrived",state.glassesCaptures>=photos.size)
+            assertTrue("a batch of two is what the phone asked for",state.syncBatchSize==2)
+            assertTrue("every frame arrived through the buffer",photos.all {it["buffered_sync"]==JsonPrimitive(true)})
+            assertTrue("nothing was triggered, so nothing became a packet",app.journal.dao.stream(id,"packets").isEmpty())
+            assertTrue("and nothing reached the model",app.journal.dao.stream(id,"decisions").isEmpty())
+            assertTrue("the phone never asked for a capture",app.journal.dao.stream(id,"captures").none {it.eventType=="CAPTURE_REQUEST"})
+            assertTrue(app.journal.verify(id))
+            val directory=File(app.filesDir,"validation").apply {mkdirs()}
+            File(directory,"service_batch_upload.json").writeText(StudyWire.payload("status" to "PASS","session_id" to id,
+                "capture_interval_ms" to 5_000,"batch_size" to 2,"front_end_enabled" to false,
+                "physical_camera_and_transport" to true,"model" to "LOCAL_SCRIPTED_MOCK",
+                "photos_uploaded" to photos.size,"glasses_captured" to state.glassesCaptures,
+                "packets" to 0,"decisions" to 0,"phone_capture_requests" to 0).toString())
         } finally {
             app.studyRuntime.stopSession();app.validationInferenceFactory=null
             compose.runOnUiThread {compose.activity.stopService(Intent(compose.activity,StudyRuntimeService::class.java))}

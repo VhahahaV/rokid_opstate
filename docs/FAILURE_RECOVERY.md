@@ -129,6 +129,38 @@ The UUID rotates across pairings — two values observed three weeks apart diffe
 so always read the current value rather than reusing an old one. Treat the value as a
 credential: it is half of what the RFCOMM connect needs, and it must not be committed.
 
+### Repairing a rotated identity
+
+The UUID is reissued whenever the glasses pair with a client, and the phone keeps whatever it was
+given - deliberately, because discarding the identity on a failed attempt is what made a dropped
+connection permanent on 2026-09-17. The result is a phone holding a socket that nobody listens on, and
+the console saying 旧的应用连接信息已经失效.
+
+It cannot be pinned. The value lives in `/data/system/cxr.connection.data`, owned by `system`, mode
+600, and the glasses are a production build: `adb root` answers `adbd cannot run as root in production
+builds`, so the file cannot be written or even read from a shell. It does not change on connection -
+only on pairing.
+
+Two ways back, and they need different things:
+
+| Who | How | Needs |
+|---|---|---|
+| Anyone, at the glasses | fold the temples, triple-click the function key, then 重新识别眼镜 in the console | the physical gesture |
+| Anyone, at the computer | `make cxr-repair PHONE_SERIAL=… GLASSES_SERIAL=…` | both devices on adb |
+
+The script reads the current value from the glasses' log - the CXR service prints it at every boot:
+
+```text
+cxr-service: load CXRConnectionInfo: <uuid>, <base64 key>
+cxr-service: rfcomm server socket listening <uuid>        # the same value, and it does not change on connect
+```
+
+`logcat -d -s cxr-service` matters here: filtering by *text* instead matches adbd's echo of the very
+command being run, and `tail -1` then returns that line instead of the boot line. If the buffer has
+already rolled over the boot, the script reboots the glasses (`--no-reboot` opts out) and waits for the
+line to reappear. It then replaces only `socket_uuid` in the app's own `shared_prefs/cxr-connection.xml`
+- keeping the paired name and address - and restarts the app, which reconnects by itself.
+
 ## 9. Restarting the glasses service after a reboot
 
 The service owns the CXR subscription, so after a reboot nothing answers the phone's handshake and

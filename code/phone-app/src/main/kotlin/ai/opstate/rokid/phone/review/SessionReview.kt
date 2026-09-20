@@ -10,7 +10,9 @@ data class TrialSummary(val anchorId: String,val at: Long,val episode: String,va
 data class SessionReview(val session: StudySessionEntity,val phase: String,val counts: Map<String,Int>,val verified: Boolean,val trials: List<TrialSummary>,val interrupted: Boolean=false,val photos: List<CapturedPhoto> = emptyList(),val contexts: List<ContextEntry> = emptyList(),
     /** Photographs an operator took out of this record. Their rows are still in the journal, which is
      *  why the count is worth showing: the album is smaller than the record, and this says by how much. */
-    val deletedPhotos: Int = 0)
+    val deletedPhotos: Int = 0,
+    /** Notes an operator has withdrawn, and the merge copies of them: same reason, said the same way. */
+    val retractedContexts: Int = 0)
 /** Operator-authored context shown alongside the captures it sits between in time. */
 data class ContextEntry(val id: String,val type: String,val title: String,val text: String,val occurredAt: Long)
 sealed interface TimelineItem {
@@ -42,6 +44,16 @@ data class CapturedPhoto(val id: String,val file: File,val capturedAt: Long,val 
     val servedDecisionId: String?=null,val servedTitle: String?=null,val servedBody: String?=null,
     val servedMode: String?=null,val servedAnchor: String?=null) {
     val historical get()=metadata.string("source")?.endsWith("HISTORY")==true
+    /** What the local front end decided about this frame, as the glasses wrote it beside the picture. */
+    val triggers get()=metadata["trigger_types"]?.jsonArray?.mapNotNull {it.jsonPrimitive.contentOrNull}.orEmpty()
+    /** True when the glasses' visual front end fired on this frame. False means it looked and declined. */
+    val triggered get()=triggers.isNotEmpty()
+    val frontEnd get()=metadata.string("front_end")
+    val frontEndScore get()=metadata.string("front_end_score")?.toDoubleOrNull()
+    /** Whether the frame carries a verdict at all: a history frame or one from before the front end. */
+    val frontEndDecided get()=frontEnd!=null && frontEnd!="DISABLED"
+    /** The verdict as one phrase, for a badge or a detail row. */
+    val triggerLabel get()=when {triggered->"触发";frontEndDecided->"未触发";else->"无判定"}
 }
 data class TrialReview(val summary: TrialSummary,val request: JsonObject?,val raw: JsonObject?,val decision: JsonObject?,val image: File?,val providerRaw: JsonObject?=null)
 class SessionReviewRepository(private val journal: StudyJournal) {
@@ -90,10 +102,23 @@ class SessionReviewRepository(private val journal: StudyJournal) {
      *
      * Reading only `body` and `public_text` - which is what this did - left every seeded note blank:
      * the picker that offers them to the operator drew empty rows, and choosing one failed validation.
+     *
+     * What the page draws is the facts, not the rows: a note withdrawn from the ledger is gone, and a
+     * note the merge copied in several times is drawn once. The rows themselves stay in the journal.
      */
-    fun contexts(id: String): List<ContextEntry> = dao.stream(id,"observations").mapNotNull {event->
-        val row=event.json()
-        if(row.string("kind")!="SYNTHETIC_CONTEXT") return@mapNotNull null
+    fun contexts(id: String): List<ContextEntry> {
+        // Two notes that share a time and a text are one fact: a merge copies an imported note into every
+        // record that had imported it, and the page draws it once. Withdrawn notes go first, and both
+        // rules read that identity from whichever field the note's writer used.
+        val withdrawn=journal.retractedContextObservations(id)
+        val rows=dao.stream(id,"observations").map {event->event to event.json()}
+            .filter {(_,row)->row.string("kind")=="SYNTHETIC_CONTEXT"}
+            .filter {(event,row)->(row.string("observation_id") ?: event.sequence.toString()) !in withdrawn}
+            .distinctBy {(_,row)->contextObservationKey(row)}
+        return rows.map {(event,row)->buildContextEntry(row,event.sequence)}.sortedBy {it.occurredAt}
+    }
+
+    private fun buildContextEntry(row: JsonObject,sequence: Long): ContextEntry {
         val body=row.string("body")
         val stored=body ?: row.string("content") ?: row.string("public_text") ?: ""
         val header=if(body==null) CONTEXT_HEADER.find(stored) else null
@@ -101,10 +126,10 @@ class SessionReviewRepository(private val journal: StudyJournal) {
         val title=row.string("title")?.takeIf {it.isNotBlank()}
             ?: withoutHeader.substringBefore('\n').trim()
         val text=if(header!=null) withoutHeader.substringAfter('\n',"").trimStart('\n') else withoutHeader
-        ContextEntry(row.string("observation_id") ?: event.sequence.toString(),
+        return ContextEntry(row.string("observation_id") ?: sequence.toString(),
             row.string("synthetic_type") ?: header?.groupValues?.get(1) ?: "NOTE",title,text,
             row["occurred_at_epoch_ms"]?.jsonPrimitive?.longOrNull ?: 0)
-    }.sortedBy {it.occurredAt}
+    }
     fun load(id: String): SessionReview {
         val session=requireNotNull(dao.session(id)) { "SESSION_NOT_FOUND" }
         fun key(row: JsonObject)=row.string("packet_id") ?: row.string("anchor_id")
@@ -118,7 +143,7 @@ class SessionReviewRepository(private val journal: StudyJournal) {
                 decision?.get("evidence_observation_ids")?.jsonArray?.size ?: 0,
                 raw[rowKey]?.get("latency_ms")?.jsonPrimitive?.longOrNull,deliveries[decision?.string("decision_id")]?.string("status"))
         }
-        return SessionReview(session,dao.checkpoint(id)?.state ?: "UNKNOWN",dao.counts(id).associate { it.stream to it.count },journal.verify(id),trials,dao.checkpoint(id)?.stateJson?.let {StudyWire.json.parseToJsonElement(it).jsonObject.string("recovery_reason")}!=null,photos(id),contexts(id),journal.deletedPhotoObservations(id).size)
+        return SessionReview(session,dao.checkpoint(id)?.state ?: "UNKNOWN",dao.counts(id).associate { it.stream to it.count },journal.verify(id),trials,dao.checkpoint(id)?.stateJson?.let {StudyWire.json.parseToJsonElement(it).jsonObject.string("recovery_reason")}!=null,photos(id),contexts(id),journal.deletedPhotoObservations(id).size,journal.retractedContextObservations(id).size)
     }
     fun trial(id: String,trial: TrialSummary): TrialReview {
         val request=find(id,"inference_requests",trial.anchorId)

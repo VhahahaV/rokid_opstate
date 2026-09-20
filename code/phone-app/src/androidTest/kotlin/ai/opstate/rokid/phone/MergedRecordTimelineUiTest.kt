@@ -70,7 +70,8 @@ class MergedRecordTimelineUiTest {
  *
  * Skips when the device holds no such record, so it is a check of the record that is there rather than
  * a fixture. The scroll walks the whole timeline up to the note, and every row it passes is measured -
- * which is exactly where a repeated key throws.
+ * which is where a repeated key used to throw. The page draws the fact once now, so what is left to
+ * prove here is that the record opens, scrolls to that note and stays open.
  */
 @RunWith(AndroidJUnit4::class)
 class MergedRecordScrollDeviceTest {
@@ -83,26 +84,37 @@ class MergedRecordScrollDeviceTest {
             node.config[SemanticsProperties.TestTag].startsWith("session-")
     }
 
-    /** A record whose observations repeat an id, and the id of a note it repeats. */
-    private fun repeatedNote(): Pair<String,String>? {
+    /**
+     * A fact the record holds more than once, and the id of the row the page draws it from.
+     *
+     * A merge leaves one row of the same note per record that had imported it, under different ids: the
+     * page keeps the first of them in chain order, which is the row a test has to look for. Withdrawn
+     * notes keep their rows too, so only the live ones are considered.
+     */
+    private fun repeatedFact(): Pair<String,String>? {
         val dao=graph.database.dao()
         for(session in dao.sessions()) {
-            val ids=dao.stream(session.sessionId,"observations").mapNotNull {row->
+            val withdrawn=graph.journal.retractedContextObservations(session.sessionId)
+            val live=dao.stream(session.sessionId,"observations").mapNotNull {row->
                 runCatching {
                     val value=StudyWire.json.parseToJsonElement(row.canonicalJson).jsonObject
-                    value["observation_id"]?.jsonPrimitive?.contentOrNull
-                        ?.takeIf {value["kind"]?.jsonPrimitive?.contentOrNull=="SYNTHETIC_CONTEXT"}
+                    val id=value["observation_id"]?.jsonPrimitive?.contentOrNull
+                    if(value["kind"]?.jsonPrimitive?.contentOrNull!="SYNTHETIC_CONTEXT" || id==null || id in withdrawn) null
+                    else id to ((value["occurred_at_epoch_ms"]?.jsonPrimitive?.longOrNull ?: 0L) to
+                        (value["content"]?.jsonPrimitive?.contentOrNull
+                            ?: value["public_text"]?.jsonPrimitive?.contentOrNull ?: ""))
                 }.getOrNull()
             }
-            ids.groupingBy {it}.eachCount().entries.firstOrNull {it.value>1}?.let {return session.sessionId to it.key}
+            val repeated=live.groupBy {it.second}.entries.firstOrNull {it.value.size>1} ?: continue
+            return session.sessionId to repeated.value.first().first
         }
         return null
     }
 
     @Test fun aMergedRecordScrollsToANoteItHoldsTwice()=runBlocking<Unit> {
         graph.storageReady.await()
-        val found=withContext(Dispatchers.IO) {repeatedNote()}
-        assumeTrue("no record on this device holds an observation id twice",found!=null)
+        val found=withContext(Dispatchers.IO) {repeatedFact()}
+        assumeTrue("no record on this device holds a note twice",found!=null)
         val (sessionId,noteId)=requireNotNull(found)
         compose.onNodeWithText("记录",useUnmergedTree=true).performClick()
         val row="session-$sessionId"
@@ -112,12 +124,12 @@ class MergedRecordScrollDeviceTest {
         compose.onNodeWithTag("operator-content-1").performScrollToNode(hasTestTag(row))
         compose.onNodeWithTag(row).performClick()
         compose.waitUntil(10_000) {compose.onAllNodesWithText("照片与记录").fetchSemanticsNodes().isNotEmpty()}
-        // Scrolling stops at the first copy; the second sits right beside it, which is how the two keys
-        // are in the list at once. Reaching here at all is the assertion - the app is closed by then if
-        // the rows share a key.
         compose.onNodeWithTag("review-content").performScrollToNode(hasTestTag("context-$noteId"))
-        assertTrue("both copies of the note are drawn",
-            compose.onAllNodesWithTag("context-$noteId").fetchSemanticsNodes().size>=2)
+        // The record holds the note many times over - every merged segment that had imported it carried
+        // a copy - and the page draws the fact once. Reaching here is the other half of the assertion: a
+        // list handed two rows that share a key used to throw out of measure and close the app.
+        assertEquals("the fact is drawn once",
+            1,compose.onAllNodesWithTag("context-$noteId").fetchSemanticsNodes().size)
         compose.onNodeWithText("照片与记录").assertExists()
         capture("merged-record-note.png")
     }

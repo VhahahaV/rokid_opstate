@@ -8,6 +8,7 @@ plugins {
 }
 
 android {
+    androidResources { noCompress += "onnx" }
     sourceSets.getByName("main").java.srcDir("../shared/src/main/kotlin")
     namespace = "ai.opstate.rokid.phone"
     compileSdk = 35
@@ -39,6 +40,8 @@ kotlin {
 }
 
 dependencies {
+    // CVTT v1 is supplied as frozen ONNX graphs and runs here, on the frames a service session uploads.
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.19.2")
     api(project(":opstate-core"))
     api(project(":opstate-protocol"))
     implementation("com.rokid.cxr:client-m:1.2.2")

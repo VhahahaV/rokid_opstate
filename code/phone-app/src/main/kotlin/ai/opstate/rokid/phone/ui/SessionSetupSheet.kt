@@ -28,6 +28,7 @@ internal const val PARTIAL_HISTORY=4
 data class SessionLaunchOptions(val alias: String,val scenarioPositionMs: Long=0,val demoMode: Boolean=true,val shadowInference: Boolean=false,
     val profile: String="BENCHMARK_ALIGNED",val mode: SessionMode=SessionMode.SERVICE,val captureIntervalMs: Long=60_000,
     val collectionHistorySessionId: String?=null,val collectionHistoryImageLimit: Int=0,val syncBatchSize: Int=60,
+    val frontEndEnabled: Boolean=true,
     /** Demo: always ask the model for a service, so a tap reliably produces something to show. */
     val forceService: Boolean=false)
 
@@ -38,6 +39,7 @@ data class ImportedHistory(val sourceSessionId: String,val imageLimit: Int=0,
 @Composable internal fun SessionSetupPanel(state: OperatorViewState,actions: OperatorActions,connect: ()->Unit,importHistory: ()->Unit) {
     var mode by rememberSaveable {mutableStateOf(SessionMode.COLLECTION)}
     var interval by rememberSaveable {mutableLongStateOf(60_000)}
+    var frontEndEnabled by rememberSaveable {mutableStateOf(true)}
     var alias by rememberSaveable {mutableStateOf("")}
     var naming by rememberSaveable {mutableStateOf(false)}
     var batch by rememberSaveable {mutableStateOf(state.syncBatchSetting.toString())}
@@ -56,22 +58,45 @@ data class ImportedHistory(val sourceSessionId: String,val imageLimit: Int=0,
     Panel {
         Text("2  选择模式",style=MaterialTheme.typography.titleMedium)
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected=mode==SessionMode.COLLECTION,onClick={mode=SessionMode.COLLECTION},label={Text("采集")},modifier=Modifier.weight(1f))
-            FilterChip(selected=mode==SessionMode.SERVICE,onClick={mode=SessionMode.SERVICE},label={Text("在线服务")},modifier=Modifier.weight(1f))
+            // The mode picks the cadence and the batch it is usually wanted at: a collection is read
+            // later, so a big batch is fine; a service is watched while it runs, so a batch that takes
+            // half an hour to fill would leave the page looking as if nothing were being captured.
+            FilterChip(selected=mode==SessionMode.COLLECTION,onClick={mode=SessionMode.COLLECTION;interval=60_000;batch=state.syncBatchSetting.toString()},
+                label={Text("采集")},modifier=Modifier.weight(1f))
+            FilterChip(selected=mode==SessionMode.SERVICE,onClick={mode=SessionMode.SERVICE;interval=30_000},
+                label={Text("在线服务")},modifier=Modifier.weight(1f))
         }
-        Text(if(mode==SessionMode.COLLECTION) "眼镜定时拍照并保存，分批同步到手机。" else "眼镜本地判断变化，触发后传图并结合历史提供服务。",color=Quiet,style=MaterialTheme.typography.bodyMedium)
+        // The two modes capture identically; what differs is what the phone does with a frame once it
+        // has it. Saying so here is what keeps the settings below from looking mode-specific.
+        Text(if(mode==SessionMode.COLLECTION) "眼镜定时拍照并按张数批量同步到手机。" else "眼镜每拍一张立刻传到手机；手机上的前端算法判断这一帧要不要进入评估。",
+            color=Quiet,style=MaterialTheme.typography.bodyMedium)
+        Text("拍照频率",style=MaterialTheme.typography.titleMedium)
+        FlowRow(horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+            listOf(5_000L to "5秒",15_000L to "15秒",30_000L to "30秒",60_000L to "1分钟",120_000L to "2分钟").forEach {(value,label)->
+                FilterChip(selected=interval==value,onClick={interval=value},label={Text(label)})
+            }
+        }
+        if(mode==SessionMode.SERVICE) Text("CVTT 前端按约 32 秒帧距标定；30 秒是推荐值。",style=MaterialTheme.typography.bodySmall,color=Quiet)
+        if(mode==SessionMode.SERVICE) Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("自动前端触发",style=MaterialTheme.typography.titleMedium)
+                Text("默认开启。手机上对每一帧照片做判断，命中才调用模型。",style=MaterialTheme.typography.bodySmall,color=Quiet)
+            }
+            Switch(frontEndEnabled,{frontEndEnabled=it})
+        }
         // 强制服务 is not offered here: it belongs to a running service, next to the sources it applies
         // to, rather than to the act of starting one.
+        // A collection fills a batch and sends it; a service session has no batch at all, because every
+        // frame it takes is on its way to the phone as it is taken - the phone is where the decision
+        // about that frame is made, and a decision cannot be made about a photograph nobody has.
         if(mode==SessionMode.COLLECTION) {
-            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)) {
-                listOf(5_000L to "5秒",30_000L to "30秒",60_000L to "1分钟",120_000L to "2分钟").forEach {(value,label)->
-                    FilterChip(selected=interval==value,onClick={interval=value},label={Text(label,style=MaterialTheme.typography.labelMedium)},modifier=Modifier.weight(1f))
-                }
-            }
+            Text("每批同步张数",style=MaterialTheme.typography.titleMedium)
             if(batching) OutlinedTextField(batch,{batch=it.filter(Char::isDigit).take(3)},label={Text("每批同步张数（1–500）")},singleLine=true,
                 keyboardOptions=KeyboardOptions(keyboardType=androidx.compose.ui.text.input.KeyboardType.Number),modifier=Modifier.fillMaxWidth())
-            else TextButton(onClick={batching=true}) {Text("每 $batch 张同步 · 修改",style=MaterialTheme.typography.bodySmall)}
-        }
+            else TextButton(onClick={batching=true}) {Text("每 $batch 张自动上传 · 修改",style=MaterialTheme.typography.bodySmall)}
+            Text("攒够这个张数，眼镜开始上传，一批传完再等下一批。",style=MaterialTheme.typography.bodySmall,color=Quiet)
+        } else Text("每张照片拍完立刻上传到手机；视觉前端算法在手机上判断这一帧要不要进入评估。",
+            style=MaterialTheme.typography.bodySmall,color=Quiet)
         if(naming) OutlinedTextField(alias,{alias=it.take(80)},singleLine=true,label={Text("记录名称（可选）")},placeholder={Text("例如：午间散步")},
             modifier=Modifier.fillMaxWidth(),keyboardOptions=KeyboardOptions(imeAction=ImeAction.Done))
         else TextButton(onClick={naming=true}) {Text("按时间命名 · 修改名称",style=MaterialTheme.typography.bodySmall)}
@@ -80,6 +105,7 @@ data class ImportedHistory(val sourceSessionId: String,val imageLimit: Int=0,
         PrimaryButton(if(preparing) "正在准备…" else if(!state.peerReady) "连接眼镜" else if(mode==SessionMode.COLLECTION) "开始采集" else "开始在线服务",canStart) {
             if(!state.peerReady) connect() else actions.start(SessionLaunchOptions(
                 alias=alias.ifBlank {SimpleDateFormat("MM-dd HH:mm",Locale.CHINA).format(Date())},mode=mode,captureIntervalMs=interval,syncBatchSize=batch.toInt(),
+                frontEndEnabled=frontEndEnabled,
                 demoMode=false,collectionHistorySessionId=history?.sourceSessionId,
                 collectionHistoryImageLimit=history?.imageLimit ?: 0))
         }
@@ -104,10 +130,13 @@ data class ImportedHistory(val sourceSessionId: String,val imageLimit: Int=0,
                 // a dead end is worse than no choice.
                 if(state.collections.isEmpty()) item {Text("还没有可导入的记录，请先完成一次采集。",color=Quiet)}
                 state.collections.forEach {entry->item {
-                    FilterChip(selectedId==entry.sessionId,{selectedId=entry.sessionId},label={Column {
+                    FilterChip(selectedId==entry.sessionId,{selectedId=entry.sessionId},
+                        // Tagged like a record row, so a test picks one by identity rather than by a name
+                        // that two records are allowed to share.
+                        modifier=Modifier.fillMaxWidth().testTag("session-${entry.sessionId}"),label={Column {
                         Text(entry.participantAlias)
                         Text("${SimpleDateFormat("MM-dd HH:mm",Locale.CHINA).format(Date(entry.startedAtEpochMs))} · ${entry.validImages} 张图片 · ${entry.contextCount} 条合成数据",style=MaterialTheme.typography.bodySmall)
-                    }},modifier=Modifier.fillMaxWidth())
+                    }})
                 }}
                 if(selected!=null) item {
                     Text("作为历史的范围",style=MaterialTheme.typography.titleMedium)

@@ -21,6 +21,21 @@ class ReceiptPolicy(
         return episode.materialRevision <= latest.servedMaterialRevision
     }
 
+    /**
+     * Whether a card that says what an already-delivered card said may go out again.
+     *
+     * [shouldSuppress] cannot answer this for a running session: it matches on the episode handle, and a
+     * stream gives every packet a handle of its own, so no receipt it writes can ever match the next one.
+     * This asks the question the receipts can actually answer - whether the wearer has already been shown
+     * this same card. It compares text, not meaning: two cards that differ in any wording are left to the
+     * model, which is the only thing that can judge whether differently-worded help is new help.
+     */
+    @Synchronized
+    fun shouldSuppressContribution(title: String?,body: String?): Boolean {
+        val key = ContributionKey.of(title,body) ?: return false
+        return receipts.any {ContributionKey.of(it.title,it.body)==key}
+    }
+
     @Synchronized
     fun finalizeDelivery(
         decision: ServiceDecision,
@@ -72,6 +87,8 @@ class ReceiptPolicy(
             servedMaterialRevision = episode.materialRevision,
             visibleAtEpochMs = visibleAckEpochMs,
             evidenceObservationIds = decision.evidenceObservationIds,
+            title = decision.title,
+            body = decision.body,
         )
         // Persistence must succeed before this receipt can suppress any future service.
         persistReceipt(receipt)

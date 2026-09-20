@@ -52,15 +52,19 @@ class PhotoDeletionDeviceTest {
                 "preprocess_hash" to "b".repeat(64),"parser_hash" to "c".repeat(64)))
             val configHash=StudyWire.sha256(StudyJournal.canonical(configuration).toString().toByteArray())
             journal.start(id,100,"TEST","photos","CONTRACT_REPLAY",configHash,now,configuration)
+            val doomedJpeg=checkerboardJpeg(1)
+            val doomedSha=StudyWire.sha256(doomedJpeg)
             val kept=journal.image(id,"capture-kept",jpeg,sha)
-            val doomed=journal.image(id,"capture-doomed",jpeg,sha)
-            for((observationId,path) in listOf("obs-kept" to kept,"obs-doomed" to doomed))
+            val doomed=journal.image(id,"capture-doomed",doomedJpeg,doomedSha)
+            fun observe(observationId: String,path: String,bytes: ByteArray,frameSha: String,at: Long)=
                 journal.append(id,"observations","OBSERVATION_PERSISTED",StudyWire.payload(
-                    "observation_id" to observationId,"kind" to "IMAGE","occurred_at_epoch_ms" to now,
-                    "available_at_epoch_ms" to now,"content" to "Current egocentric image observation.",
-                    "asset_id" to "asset-${observationId}","local_relative_path" to path,"sha256" to sha,
+                    "observation_id" to observationId,"kind" to "IMAGE","occurred_at_epoch_ms" to at,
+                    "available_at_epoch_ms" to at,"content" to "Current egocentric image observation.",
+                    "asset_id" to "asset-${observationId}","local_relative_path" to path,"sha256" to frameSha,
                     "width" to 320,"height" to 240,"rotation_degrees" to 0,"quality_valid" to true,
-                    "quality_status" to "VALID","byte_length" to jpeg.size),now)
+                    "quality_status" to "VALID","byte_length" to bytes.size),at)
+            observe("obs-kept",kept,jpeg,sha,now)
+            observe("obs-doomed",doomed,doomedJpeg,doomedSha,now+1_000)
             journal.stop(id,now)
             assertEquals(2,LocalCollectionRepository(journal).list().single {it.sessionId==id}.validImages)
 
@@ -211,9 +215,10 @@ class PhotoDeletionDeviceTest {
         }
     }
 
-    private fun checkerboardJpeg(): ByteArray {
+    /** Two frames of one record are two different photographs: same bytes at the same instant is one. */
+    private fun checkerboardJpeg(shift: Int=0): ByteArray {
         val bitmap=Bitmap.createBitmap(320,240,Bitmap.Config.ARGB_8888)
-        for(y in 0 until 240) for(x in 0 until 320) bitmap.setPixel(x,y,if((x/10+y/10)%2==0) Color.WHITE else Color.BLACK)
+        for(y in 0 until 240) for(x in 0 until 320) bitmap.setPixel(x,y,if((x/10+y/10+shift)%2==0) Color.WHITE else Color.BLACK)
         return ByteArrayOutputStream().use {bitmap.compress(Bitmap.CompressFormat.JPEG,95,it);bitmap.recycle();it.toByteArray()}
     }
 }

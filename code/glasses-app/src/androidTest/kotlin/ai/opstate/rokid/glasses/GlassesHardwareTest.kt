@@ -30,6 +30,69 @@ class GlassesHardwareTest {
      * exactly what a wearer reports as a green background behind the text. No card redesign can remove
      * it, because the card was never what was lighting up.
      */
+    /**
+     * The live version of the same thing: with the phone actually running a service session, the page
+     * the wearer taps shows the real cadence and queue rather than an injected fixture. Runs only when
+     * asked for, because a session has to be live on the phone for it to mean anything.
+     */
+    @Test fun aLiveServiceSessionPublishesItsCaptureStateToThePage() = runBlocking {
+        org.junit.Assume.assumeTrue("needs a service session running on the phone",
+            InstrumentationRegistry.getArguments().getString("live_service")=="true")
+        val activity=activity()
+        val app=context.applicationContext as GlassesApplication
+        withTimeout(5000) {while(!app.ui.value.running) delay(20)}
+        val hud=activity.findViewById<android.view.ViewGroup>(android.R.id.content).getChildAt(0) as HudView
+        try {
+            withTimeout(60_000) {while(app.ui.value.sessionId==null || app.ui.value.autonomousMode!="SERVICE") delay(200)}
+            val state=app.ui.value
+            assertTrue("the page knows the cadence the phone configured",state.captureIntervalMs>0)
+            assertTrue("and that a session is being served",state.sessionId!=null)
+            fun tap()=instrumentation.runOnMainSync {
+                activity.onKeyUp(KeyEvent.KEYCODE_ENTER,KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ENTER))
+            }
+            // A session's start status arrives as a card, and on a panel whose window is not the focused
+            // one that card is held rather than shown and expired. Every tap toggles, so the page is
+            // settled to blank first and then the one gesture that matters is made.
+            tap();delay(400);tap();delay(400)
+            if(hud.hasContent) {tap();delay(400)}
+            assertFalse("a service session stays silent until tapped",hud.hasContent)
+            tap();delay(400)
+            assertTrue("a tap shows the capture state of that session",hud.hasContent)
+            tap();delay(400)
+            assertFalse("and a tap puts it away again",hud.hasContent)
+        } finally {instrumentation.runOnMainSync {activity.finish()}}
+    }
+
+    /**
+     * A service session has a page of its own.
+     *
+     * It used to have nothing to draw: the phone sends no status page unless the demo switch is on, and
+     * the render had no branch for a service session without one, so a tap toggled between two empty
+     * screens - which is what "a single tap shows nothing" was. What it shows now comes from the glasses
+     * themselves, so it is there whether or not the phone has anything to say about the session.
+     */
+    @Test fun aServiceSessionShowsItsCaptureStateWhenTapped() = runBlocking {
+        val activity=activity()
+        val app=context.applicationContext as GlassesApplication
+        withTimeout(5000) {while(!app.ui.value.running) delay(20)}
+        val hud=activity.findViewById<android.view.ViewGroup>(android.R.id.content).getChildAt(0) as HudView
+        try {
+            app.mutableUi.value=GlassesUiState(running=true,cameraReady=true,phoneConnected=true,sessionId="service-page-fixture",
+                autonomousMode="SERVICE",localCaptures=18,bufferedPhotos=0,captureIntervalMs=30_000,frontEndEnabled=true)
+            delay(300)
+            assertFalse("a service session opens silent",hud.hasContent)
+            instrumentation.runOnMainSync {
+                activity.onKeyUp(KeyEvent.KEYCODE_ENTER,KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ENTER))
+            }
+            delay(300)
+            assertTrue("a tap shows what the glasses are doing",hud.hasContent)
+            instrumentation.runOnMainSync {
+                activity.onKeyUp(KeyEvent.KEYCODE_ENTER,KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ENTER))
+            }
+            delay(300)
+            assertFalse("a second tap puts it away",hud.hasContent)
+        } finally {instrumentation.runOnMainSync {activity.finish()}}
+    }
     private fun assertNeverVeils(activity: MainActivity) = assertEquals(
         "the window must not set a brightness override",
         WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE,activity.window.attributes.screenBrightness,0f)

@@ -3,6 +3,7 @@ package ai.opstate.core.tests
 import ai.opstate.core.context.CausalContextStore
 import ai.opstate.core.inference.*
 import ai.opstate.core.model.*
+import ai.opstate.core.receipt.DeliveryPolicy
 import ai.opstate.core.receipt.ReceiptPolicy
 import ai.opstate.core.runtime.StudyStateMachine
 import ai.opstate.core.scheduler.*
@@ -355,5 +356,75 @@ fun main() {
         assertEquals(listOf("history-image-2","history-image-3","history-image-4","history-image-5"),rows.filter {it.kind==ObservationKind.IMAGE}.map {it.observationId})
         assertFalse(rows.any {it.observationId in setOf("old-noise","future")},"HR working set leaked noise or future evidence")
     }
+    test("a card standing on the camera alone is withheld while the record has something to stand on") {
+        val now=1_800_000_000_000L
+        val anchor=AnchorCandidate("a",now,"img","asset","obj","ep",emptySet(),0.5,emptyMap())
+        val image=ImageQuality(true,100.0,80.0,0.2,1280,720,0,"hash")
+        val records=listOf(
+            ObservationRecord("checklist",ObservationKind.SYNTHETIC_CONTEXT,now-1000,now-1000,"trip checklist: charger unchecked"),
+            ObservationRecord("flight",ObservationKind.SYNTHETIC_CONTEXT,now-2000,now-2000,"calendar: flight today 09:35"),
+            ObservationRecord("camera",ObservationKind.IMAGE,now,now,"Current egocentric image observation.","asset"),
+        )
+        val request=InferenceContract.buildRequest("req",anchor,image,records,emptyList(),"prompt","preprocess")
+        val episode=CandidateEpisode("ep","obj","intent",ServiceMode.PREPARATION)
+        fun card(evidence: Set<String>)=InferenceResponse("req","decision",DecisionLabel.SERVICE,ServiceMode.PREPARATION,
+            "带充电器","充电器和住宿仍未确认。",evidence,now,now+20_000)
+        fun verdict(response: InferenceResponse,mode: DeliveryPolicy.Mode=DeliveryPolicy.Mode.PRODUCTION)=DeliveryPolicy.evaluate(
+            request,response,episode,episode,"s",1L,"s",1L,now,ReceiptPolicy(),false,
+            DeliveryPolicy.groundingFor(request),mode)
+
+        assertEquals(DeliveryPolicy.Status.SUPPRESS_UNGROUNDED,verdict(card(setOf("camera"))).status)
+        assertEquals(DeliveryPolicy.Status.DELIVER,verdict(card(setOf("camera","checklist","flight"))).status)
+        // Forced demo is the operator asking to see a card; the rules that exist to keep cards rare are off.
+        assertEquals(DeliveryPolicy.Status.DELIVER,verdict(card(setOf("camera")),DeliveryPolicy.Mode.FORCED_DEMO).status)
+
+        // A session seeded from nothing has nothing to stand on, and muting it would refuse every card it
+        // could ever produce rather than the empty ones.
+        val bare=InferenceContract.buildRequest("req",anchor,image,listOf(records[2]),emptyList(),"prompt","preprocess")
+        assertFalse(DeliveryPolicy.groundingFor(bare).enforced,"a record-less session was held to a record floor")
+        assertEquals(DeliveryPolicy.Status.DELIVER,DeliveryPolicy.evaluate(bare,card(setOf("camera")),episode,episode,
+            "s",1L,"s",1L,now,ReceiptPolicy(),false,DeliveryPolicy.groundingFor(bare)).status)
+    }
+
+    test("a receipt carries the card it stands for, and the same card is not shown twice") {
+        val now=1_800_000_000_000L
+        val episode=CandidateEpisode("ep","obj","intent",ServiceMode.PREPARATION)
+        val policy=ReceiptPolicy()
+        val decision=ServiceDecision("req","decision",DecisionLabel.SERVICE,ServiceMode.PREPARATION,
+            "带充电器","充电器和住宿仍未确认。",setOf("checklist","flight"),now,now+20_000)
+        val outcome=policy.finalizeDelivery(decision,episode,"obj",now+1_000,setOf("checklist","flight"),now+1_000)
+        assertEquals(DeliveryStatus.DISPLAY_VISIBLE,outcome.status)
+        assertEquals("带充电器",outcome.receipt?.title,"receipt did not carry the card it stands for")
+        assertEquals("充电器和住宿仍未确认。",outcome.receipt?.body)
+
+        assertTrue(policy.shouldSuppressContribution("带充电器","充电器和住宿仍未确认。"),"the same card was not recognised")
+        assertTrue(policy.shouldSuppressContribution(" 带充电器 ","充电器和住宿仍未确认。"),"case and spacing changed the card")
+        assertFalse(policy.shouldSuppressContribution("带充电器","充电器和住宿仍未确认，出发前请检查。"),"a reworded card was treated as a repeat")
+        assertFalse(policy.shouldSuppressContribution("登机口变更","请前往 B42。"),"an unrelated card was treated as a repeat")
+    }
+
+    test("a bare frame reaches the model with a bounded selection instead of the whole record") {
+        val store=CausalContextStore()
+        val now=1_800_000_000_000L
+        val week=7*24*3_600_000L
+        val pinned=(0 until 40).map {"note-$it"}.toSet()
+        repeat(40) {index->store.append(ObservationRecord("note-$index",ObservationKind.SYNTHETIC_CONTEXT,
+            now-week+index,now-week+index,"meeting note $index about the project"))}
+        store.append(ObservationRecord("live",ObservationKind.IMAGE,now,now,"Current egocentric image observation.","asset-2"))
+
+        val (bare,trace)=store.historyRetrievalDetailed(now,listOf("live"),pinnedIds=pinned)
+        assertEquals(12,bare.count {it.kind==ObservationKind.SYNTHETIC_CONTEXT},"the record reached the model whole")
+        assertTrue(trace.retrievedIds.isEmpty(),"a frame with nothing to ask about still pulled records")
+
+        // The record is still reachable: a packet that brings a question pulls the counterpart that
+        // answers it, however old it is.
+        store.append(ObservationRecord("charger",ObservationKind.SYNTHETIC_CONTEXT,now-week,now-week,
+            "trip checklist: charger and accommodation still unchecked"))
+        store.append(ObservationRecord("arrival",ObservationKind.SYNTHETIC_CONTEXT,now,now,"trip checklist for today"))
+        val (joined,joinedTrace)=store.historyRetrievalDetailed(now,listOf("arrival"),pinnedIds=pinned)
+        assertTrue("charger" in joinedTrace.retrievedIds,"the counterpart the packet brought a question about was not retrieved")
+        assertTrue(joined.any {it.observationId=="charger"},"the retrieved counterpart did not reach the working set")
+    }
+
     println("ALL TESTS PASSED: $passed")
 }

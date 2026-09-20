@@ -4,7 +4,6 @@ import ai.opstate.protocol.*
 import ai.opstate.rokid.glasses.capture.AndroidCameraSession
 import ai.opstate.rokid.glasses.capture.CameraJpeg
 import ai.opstate.rokid.glasses.capture.PhotoBuffer
-import ai.opstate.rokid.vision.VisualSignatureExtractor
 import ai.opstate.core.scheduler.StreamingPacketizer
 import ai.opstate.rokid.glasses.sensor.AndroidImuSampler
 import ai.opstate.rokid.glasses.sensor.MotionWindowSummary
@@ -77,11 +76,12 @@ class GlassesStudyService : Service() {
     private var nextCaptureElapsed=0L
     private var lastLocalCaptureElapsed=0L
     private var flushing=false
+    private var manualFlush=false
     private var offeredId: String?=null
     private var offerElapsed=0L
     private var capturedCount=0
-    private var localTrigger=StreamingPacketizer()
-    private var pendingTrigger=setOf<String>()
+    // The visual front end runs on the phone now, so nothing here holds a trigger: a frame is taken,
+    // buffered and sent, and the phone decides whether the model should look at it.
     private var lastBufferStatus=0L
     private var lastStatusSignature=""
     private var heldCard: StudyMessage?=null
@@ -252,10 +252,12 @@ class GlassesStudyService : Service() {
                 require(mode in setOf("COLLECTION","SERVICE"))
                 val interval=p.getValue("interval_ms").jsonPrimitive.long
                 val batch=p.getValue("batch_size").jsonPrimitive.int
-                require(interval in 5_000..300_000 && batch in 1..500)
+                require(interval in 5_000..3_600_000 && batch in 1..500)
+                val wasConfigured=autonomousMode!=null
                 autonomousMode=mode;intervalMs=interval;batchSize=batch
                 automatic=p["automatic"]?.jsonPrimitive?.boolean ?: true
-                if(nextCaptureElapsed==0L) nextCaptureElapsed=SystemClock.elapsedRealtime()
+                if(!wasConfigured) nextCaptureElapsed=SystemClock.elapsedRealtime()
+                else nextCaptureElapsed=SystemClock.elapsedRealtime()+intervalMs
                 if(automatic) wakeLock?.acquire() else wakeLock?.takeIf {it.isHeld}?.release()
                 // Motion summaries only feed the SERVICE path (kickModel and the scheduler snapshot are
                 // both SERVICE-gated), so COLLECTION does not pay for three sensors at ~50 Hz.
@@ -264,10 +266,9 @@ class GlassesStudyService : Service() {
                 flushing=flushing || (mode=="COLLECTION" && buffer.entries().any {it.descriptor.session_id!=activeSession})
                 sendBufferStatus()
             }
-            "FLUSH_CAPTURE_BUFFER" -> {flushing=true;sendBufferStatus()}
-            "EDGE_DIGITAL_EVENT" -> if(autonomousMode=="SERVICE") {
-                pendingTrigger=pendingTrigger+localTrigger.onDigital(message.payload.getValue("event_id").jsonPrimitive.content,System.currentTimeMillis()).flatMap {it.triggerTypes}
-            }
+            "FLUSH_CAPTURE_BUFFER" -> {flushing=true;manualFlush=true;sendBufferStatus()}
+            // EDGE_DIGITAL_EVENT is gone with the front end: a context that arrives is the phone's own
+            // knowledge, and the phone keeps it rather than asking the glasses to take an extra shot.
             "IMAGE_COMMITTED" -> {
                 val p=message.payload;val id=p.getValue("capture_id").jsonPrimitive.content
                 buffer.commit(id,p.getValue("sha256").jsonPrimitive.content,p.getValue("byte_length").jsonPrimitive.int)
@@ -443,8 +444,10 @@ class GlassesStudyService : Service() {
             android.util.Log.w("OPSTATE","HEARTBEAT_LOST")
         }
         if(autonomousMode!=null && activeSession!=null) {
-            if(autonomousMode=="SERVICE" && !paused && !heartbeatLost) pendingTrigger=pendingTrigger+localTrigger.advance(System.currentTimeMillis()).flatMap {it.triggerTypes}
-            if(!paused && automatic && captureId==null && now-lastLocalCaptureElapsed>=5_000 && (autonomousMode=="COLLECTION" || !heartbeatLost) && (now>=nextCaptureElapsed || pendingTrigger.isNotEmpty())) {
+            // The cadence is the same in both modes, and so is what happens to a shot: it is buffered
+            // and it goes. Nothing here decides whether a frame is interesting - that is the phone's
+            // job now, on the frames it receives, which is why a service session has no batch to fill.
+            if(!paused && automatic && captureId==null && now-lastLocalCaptureElapsed>=5_000 && (autonomousMode=="COLLECTION" || !heartbeatLost) && now>=nextCaptureElapsed) {
                 lastLocalCaptureElapsed=now
                 if(nextCaptureElapsed<=now) nextCaptureElapsed+=((now-nextCaptureElapsed)/intervalMs+1)*intervalMs
                 capture(StudyMessage(session_id=requireNotNull(activeSession),session_epoch=activeEpoch,sent_at_epoch_ms=phoneNow(),
@@ -461,7 +464,10 @@ class GlassesStudyService : Service() {
     }
     private fun eligiblePhotos()=buffer.entries().filter {autonomousMode=="COLLECTION" || it.descriptor.session_id==activeSession}
     private fun updateBufferUi() {graph.mutableUi.update {it.copy(bufferedPhotos=eligiblePhotos().size,localCaptures=capturedCount,
-        collectingLocally=autonomousMode=="COLLECTION" && automatic && !paused,setupError=bufferError)}}
+        collectingLocally=autonomousMode=="COLLECTION" && automatic && !paused,setupError=bufferError,
+        // The page has to be able to say what the glasses are doing even when the phone sends nothing:
+        // a service session's own cadence and queue are what the wearer is looking for.
+        autonomousMode=autonomousMode,captureIntervalMs=intervalMs,paused=paused)}}
     /** Everything the phone acts on; excludes the volatile countdown so steady state compares equal. */
     private fun statusSignature()="$capturedCount/${eligiblePhotos().size}/${captureId!=null}/$automatic/$flushing/$bufferError"
     private suspend fun sendBufferStatus() {
@@ -469,14 +475,33 @@ class GlassesStudyService : Service() {
         lastBufferStatus=SystemClock.elapsedRealtime();updateBufferUi();lastStatusSignature=statusSignature()
         send("CAPTURE_BUFFER_STATUS",StudyWire.payload("captured" to capturedCount,"pending" to eligiblePhotos().size,"batch_size" to batchSize,
             "free_bytes" to buffer.freeBytes,"capturing" to (captureId!=null),"automatic" to automatic,"syncing" to flushing,
-            "next_capture_in_ms" to (nextCaptureElapsed-SystemClock.elapsedRealtime()).coerceAtLeast(0),"error" to bufferError))
+            "next_capture_in_ms" to (nextCaptureElapsed-SystemClock.elapsedRealtime()).coerceAtLeast(0),
+            "error" to bufferError))
     }
+    /**
+     * The upload queue, counted in images rather than in seconds.
+     *
+     * A batch goes out when [batchSize] frames are waiting - the same rule a collection uses, because
+     * the two modes capture the same way and differ only in what happens to a frame afterwards. Two
+     * kinds of frame are not held back by that count: one a trigger hit produced, which is the moment
+     * the front end exists to catch, and a manual shot, which the operator just asked for. There is no
+     * clock in this decision at all: a service session uploads every frame it captures, so spacing them
+     * out by time was only ever a way of making the phone look empty while it was working.
+     */
     private suspend fun syncNext(now: Long) {
         val queued=eligiblePhotos()
-        if(queued.isEmpty()) {flushing=false;return}
-        if(autonomousMode=="SERVICE" || queued.size>=batchSize) flushing=true
-        if(!flushing || (offeredId!=null && now-offerElapsed<25_000)) return
-        val entry=queued.first()
+        if(queued.isEmpty()) {flushing=false;manualFlush=false;return}
+        // A manual shot is the only thing that still jumps the queue: the frames a service session
+        // takes carry no verdict of their own any more, because the phone is what judges them.
+        fun urgent(entry: PhotoBuffer.Entry)=entry.metadata["trigger_types"]?.jsonArray?.any {it.jsonPrimitive.content=="MANUAL"}==true
+        if(!flushing) {
+            // A collection waits for its batch; a service session does not batch at all - every frame it
+            // takes is on its way to the phone, which is where the decision about it is made.
+            if(!(manualFlush || autonomousMode=="SERVICE" || queued.size>=batchSize || queued.any(::urgent))) return
+            flushing=true
+        }
+        if(offeredId!=null && now-offerElapsed<25_000) return
+        val entry=queued.firstOrNull(::urgent) ?: queued.first()
         val descriptor=entry.descriptor.copy(session_id=requireNotNull(activeSession),session_epoch=activeEpoch)
         val server=images ?: return
         offeredId?.let(server::acknowledge)
@@ -536,12 +561,14 @@ class GlassesStudyService : Service() {
             capturedCount++
             val manual=event.request.payload["autonomous"]?.jsonPrimitive?.boolean!=true
             if(manual) flushing=true
-            val triggers=if(autonomousMode=="SERVICE" && manual) setOf("MANUAL") else if(autonomousMode=="SERVICE") {
-                if(!VisualSignatureExtractor.usable(frame.jpeg)) {bufferError="等待清晰画面";return}
-                val detected=localTrigger.onImage("obs-$id","asset-${descriptor.sha256.take(16)}",descriptor.captured_at_epoch_ms,VisualSignatureExtractor.fromJpeg(frame.jpeg))
-                (pendingTrigger+detected.flatMap {it.triggerTypes}).also {pendingTrigger=emptySet()}
-            } else emptySet()
-            if(autonomousMode=="COLLECTION" || triggers.isNotEmpty()) {
+            // A service frame carries what the wearer did (nothing) and no verdict: the phone decides
+            // what to make of it, because the front end that used to run here now runs there.
+            val triggers=if(autonomousMode=="SERVICE" && manual) setOf("MANUAL") else emptySet()
+            // Every shot is kept, in both modes. A service session's frames are the same record of what
+            // the wearer passed in front of as a collection's, and the phone draws them side by side -
+            // what a trigger adds is that the frame is worth evaluating, not that it is worth keeping.
+            // `trigger_types` is what travels with the frame to say which of the two it is.
+            run {
                 try {
                     buffer.put(descriptor,frame.jpeg,StudyWire.payload("camera_duration_ms" to event.durationMs,
                         "captured_phone_epoch_ms" to descriptor.captured_at_epoch_ms+phoneMinusGlassesMs,
@@ -585,13 +612,13 @@ class GlassesStudyService : Service() {
         generation++
         captureJob?.cancel(); transferJob?.cancel(); captureId=null
         imageSender=null;paused=false
-        autonomousMode=null;automatic=true;nextCaptureElapsed=0;offeredId=null;flushing=false;capturedCount=0
+        autonomousMode=null;automatic=true;nextCaptureElapsed=0;offeredId=null;flushing=false;manualFlush=false;capturedCount=0
         lastStatusSignature=""
-        localTrigger=StreamingPacketizer();pendingTrigger=emptySet();bufferError=null
+        bufferError=null
         wakeLock?.takeIf {it.isHeld}?.release()
         images?.close(); images=null
         imu.stop(); clearCards(); visibleAcks.clear(); heartbeatLost=false
-        graph.mutableUi.update {it.copy(demoStatus=null)}
+        graph.mutableUi.update {it.copy(demoStatus=null,autonomousMode=null,captureIntervalMs=0,paused=false)}
     }
     override fun onDestroy() {
         resetTransient(); scope.cancel()

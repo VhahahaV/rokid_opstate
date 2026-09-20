@@ -2,7 +2,7 @@ PYTHON ?= python3
 VENV := .venv
 PY := $(VENV)/bin/python
 
-.PHONY: help setup test test-core test-python demo serve android apks quick-check check-all device-apks device-test
+.PHONY: help setup test test-core test-python demo serve android apks quick-check check-all device-apks device-test cxr-repair
 help:
 	@echo 'make setup      Install Python dependencies in .venv'
 	@echo 'make test       Run core, simulations, Python and schema/trace checks'
@@ -13,6 +13,7 @@ help:
 	@echo 'make quick-check  Python, core, protocol and phone JVM tests; no device/soak tests'
 	@echo 'make check-all  Run all checks, including Android lint (SDK required)'
 	@echo 'make device-test PHONE_SERIAL=... GLASSES_SERIAL=...  Run device smoke tests (make serve first)'
+	@echo 'make cxr-repair PHONE_SERIAL=... GLASSES_SERIAL=...  Re-point the phone at the current CXR identity'
 
 setup:
 	$(PYTHON) -m venv $(VENV)
@@ -47,6 +48,11 @@ check-all: test
 
 device-apks:
 	./tools/gradle.sh --console=plain -PwithAndroid=true :opstate-phone:assembleDebugAndroidTest :opstate-glasses:assembleDebugAndroidTest
+
+# Puts the phone back on the glasses' current CXR socket identity after a re-pairing (see
+# docs/FAILURE_RECOVERY.md §8). Needs both devices attached.
+cxr-repair:
+	. ./.local/environment.sh; ADB="$$(command -v adb)" GLASSES_SERIAL="$(GLASSES_SERIAL)" PHONE_SERIAL="$(PHONE_SERIAL)" ./tools/cxr_repair.sh
 
 device-test: device-apks
 	. ./.local/environment.sh; ADB="$$(command -v adb)" $(PY) tools/device_smoke.py --phone "$(PHONE_SERIAL)" --glasses "$(GLASSES_SERIAL)"

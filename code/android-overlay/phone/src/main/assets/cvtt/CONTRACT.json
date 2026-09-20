@@ -1,0 +1,222 @@
+{
+ "code": {
+  "git_dirty": true,
+  "git_rev": "84fae4a4c72636dd39863200a0c87b9259b62f92",
+  "modules": {
+   "cvtt/encoder.py": "a7b668687b625b890214517d4a8a899ed43dc5777c2f52197d1953a1e3f4f111",
+   "cvtt/evaluate.py": "0e257c8ffdc8db0d64e8da97e628e05f3467949118bc5e1a3ade4dcf3c72a8c2",
+   "cvtt/features.py": "9ea7568c1381dbf89e3ce8c18c04729f7a4d07af10d44768ea1bc7b40af2afa4",
+   "cvtt/labeling.py": "1c8ac7b3982ed76f5acccb29e361bb8aae27c8b2b21dab199d80ab31f84324db",
+   "cvtt/models.py": "7f693fa4bd68337de6cc72133025f4382bbbce0606b34daff39619e40c3cadd2",
+   "cvtt/segments.py": "d9cc1641e7192b2197ca89d88b75cc43616f062db1d3926ded5b63ef258c4033",
+   "cvtt/train.py": "4bae8f2575d3b85a31f2b13817255cc721e9f72b1ea322dd857f7913276717e9",
+   "cvtt/trigger.py": "54272afe85d13b6c77d879c4e187ad21cbb147ad42f61fd7bb680ef79d89e7c6"
+  }
+ },
+ "created_at": "2026-09-19T09:00:59.952120Z",
+ "decision_policy": {
+  "anchor_definition": "packet['cutoff_at'] of every packet the front-end emits — i.e. the available_at of the camera observation that fired. Never back-dated to an earlier observation, never forward-dated to a later peak.",
+  "anchor_set": "every packet: VISUAL + DIGITAL + PUBLIC_TIME. A DIGITAL packet emitted while the camera is active still carries the newest frame (FrontEnd._emit falls back to last_image), so the agent does look at the picture at that instant.",
+  "cold_start": "the first camera frame of the stream emits an initialisation packet regardless of score, and it is counted in the anchor set but excluded from the VISUAL-only count.",
+  "heartbeat_note": "DISABLED, and this is a deviation from configs/default.yaml's 900 s. Every number this contract is based on was measured with the heartbeat off (P22 'no heartbeat', P23 A'). Replaying with the production beat adds ~7.9k calls a year and makes the rule look as though it barely fires. In replay_learned this is heartbeat_s = 10**9.",
+  "heartbeat_s": null,
+  "latch": "fired on the first observation whose score >= theta_on while the latch is open; the latch closes and reopens on score <= theta_off OR on 120 s elapsed since the last trigger, whichever comes first. The step that reopens the latch does not fire.",
+  "score_state": "carried within a camera session and reset between sessions (Sessions.span_of, from observation_intervals), which is how the head was trained. The latch state is NOT reset at session boundaries — it runs continuously over the prefix, as in P22/P23."
+ },
+ "development": {
+  "latency_p50_s": 41.0,
+  "latency_p90_s": 98.20000000000002,
+  "observed_hours": null,
+  "partition": "2020 dev (2020-05-22..31)",
+  "precision": 0.5931232091690545,
+  "recall": 0.5404699738903395,
+  "selection_bias": "These dev numbers chose the epoch and the thresholds, so they are optimistic. The unbiased estimate is FE_TEST, which has not been read.",
+  "target_triggers": 178,
+  "transitions": 383,
+  "triggers": 349
+ },
+ "encoder": {
+  "embedding_width": 384,
+  "feature_cache": "cvtt_exp/data/features/poolings/patch_mean_full.npz",
+  "feature_cache_sha256": "ecd6534ced2b3b2fa49a846247d108e91c287a4bf0cdc491f3ebad941cbff6c4",
+  "layer": "last_hidden_state patch mean (patch_mean), L2 normalised per frame",
+  "note": "patch_mean_full.npz is the union of the 2019 and 2020 caches; the overlapping rows were verified identical to 200 sampled rows each.",
+  "pooling": "patch_mean",
+  "repo": "facebook/dinov3-vits16plus-pretrain-lvd1689m",
+  "revision": "c93d816fc9e567563bc068f01475bec89cc634a6"
+ },
+ "evidence": {
+  "dev_selection": "cvtt_exp/data/diagnostics/2020_scaling_dev_u32n4.json",
+  "head_budget_match": "cvtt_exp/data/diagnostics/head_budget_match_2019.json",
+  "two_units_note": "The learned arm's headline count is agent calls (19,471); the pHash baselines it is compared against are stated in VISUAL triggers (43,966). The two units are not interchangeable — year_2019_table.json carries both for every arm.",
+  "year_table": "cvtt_exp/data/diagnostics/year_2019_table.json"
+ },
+ "front_end": {
+  "arm": "learned",
+  "checkpoint": "/home/caizhuoqiang/Code/pro_simualtor/cvtt_exp/data/freeze/checkpoints/frontend_gru_u32n4_5m_seed11.pt",
+  "checkpoint_sha256": "5ee12ec556720da1b8e2b772875542d25ecd76c768d4ed291a2152427fc02e79",
+  "checkpoints": [
+   {
+    "path": "/home/caizhuoqiang/Code/pro_simualtor/cvtt_exp/data/freeze/checkpoints/frontend_gru_u32n4_5m_seed11.pt",
+    "seed": 11,
+    "sha256": "5ee12ec556720da1b8e2b772875542d25ecd76c768d4ed291a2152427fc02e79",
+    "source": "data/runs/checkpoints/y2020_u32n4_5m_seed11.pt"
+   },
+   {
+    "path": "/home/caizhuoqiang/Code/pro_simualtor/cvtt_exp/data/freeze/checkpoints/frontend_gru_u32n4_5m_seed23.pt",
+    "seed": 23,
+    "sha256": "1e221e83ad53d5a51e66251ff206d719dd781258fc93a469d7725628ae712de3",
+    "source": "data/runs/checkpoints/y2020_u32n4_5m_seed23.pt"
+   },
+   {
+    "path": "/home/caizhuoqiang/Code/pro_simualtor/cvtt_exp/data/freeze/checkpoints/frontend_gru_u32n4_5m_seed37.pt",
+    "seed": 37,
+    "sha256": "067b12cd66bb454463a2414073003fb655aea616fc28540475d14fb63517110b",
+    "source": "data/runs/checkpoints/y2020_u32n4_5m_seed37.pt"
+   }
+  ],
+  "ensemble": {
+   "combination": "arithmetic mean of the raw logits, joined on observation_id",
+   "members": [
+    11,
+    23,
+    37
+   ],
+   "why": "P10: averaging the seeds beats any single seed on dev. The join key matters — an earlier script paired scores with timestamps by position and reported a headline 80.6% where the honest number was 46.5%."
+  },
+  "head": "gru",
+  "refractory_s": 120.0,
+  "rule": "hysteresis_with_refractory",
+  "selection": "2020-05-22..31 dev, highest F1 over the swept rule family (train.evaluate_dev); reproduced bit-for-bit in year_2019_table.json",
+  "theta_off": 0.930753,
+  "theta_on": 1.926526
+ },
+ "head_choice": {
+  "caveat": "The TCN's replacement point had to widen the hysteresis band because its theta_on quantile grid is saturated at the 99.5th percentile of dev scores; 'the TCN has no low-budget operating point' therefore holds within the swept family, not in general. Seed-to-seed stability was not measured with a common selection function and must not be cited for either head.",
+  "chosen": "gru",
+  "evidence": "cvtt_exp/data/diagnostics/head_budget_match_2019.json",
+  "reading": "At equal budget the TCN loses on all three metrics (F1 0.5064 vs 0.5172), so its recall advantage at its own optimum (0.7337) is bought with calls, not with a better representation. The project's objective is fewer interruptions for the same service value, so the tied-on-F1 arm that fires less is the one to ship.",
+  "rejected": "tcn",
+  "result": {
+   "gru_at_own_budget": {
+    "calls": 19471,
+    "f1": 0.5172113430331968,
+    "precision": 0.41168917877869654,
+    "recall": 0.6954711087975013
+   },
+   "tcn_moved_onto_that_budget": {
+    "calls": 19876,
+    "f1": 0.5064008661868671,
+    "precision": 0.40003018716039446,
+    "recall": 0.6898316848863439
+   },
+   "verdict": "GRU dominates: same F1 at fewer calls"
+  },
+  "switch_condition": "Pick tcn_ensemble instead only if the deployment objective changes to recall-first with ~10% more budget. Its contract would be cvtt_exp/data/runs/checkpoints/y2020_tcn_5m_seed{11,23,37}.pt at theta 2.135893/-0.365047, refractory 120.0 s, heartbeat off — worth 21344 calls for recall 0.7337."
+ },
+ "manifest_sha256": "b696622137b16e9eca20688f80b575da46172a5883f7016be9bb90efdd715a22",
+ "packet_policy": {
+  "config": "opstate-streaming-harness/configs/default.yaml",
+  "config_sha256": "3555bc2ce5fdaf38a16ca2e5a85f086d318bd90cc34076da2a7d3c0c39d553cf",
+  "note": "Inherited unchanged from the harness; the learned arm differs only in where VISUAL triggers come from."
+ },
+ "partitions": {
+  "AGENT_ONLY": {
+   "camera_days": 460,
+   "classes_present": [
+    "B",
+    "C",
+    "D",
+    "E"
+   ],
+   "date_list_sha256": "945396d258db73466f3e44e023fda1743888bd4c8775d9d4717e77aa867d36a6",
+   "days": 480,
+   "end": "2020-06-30",
+   "start": "2019-03-09"
+  },
+  "FE_DEV": {
+   "camera_days": 10,
+   "classes_present": [
+    "B",
+    "C",
+    "D",
+    "E"
+   ],
+   "date_list_sha256": "d56fcf49c286176b2c27a5077c761fa1d31b0284b39bb2273c85b4a4916b3fe8",
+   "days": 10,
+   "end": "2019-02-24",
+   "start": "2019-02-15"
+  },
+  "FE_TEST": {
+   "camera_days": 12,
+   "classes_present": [
+    "B",
+    "C",
+    "D",
+    "E"
+   ],
+   "date_list_sha256": "fd451e6c329ce58ea591618403fd98577fb9f95bd6dbd10d2917dd051b4a1736",
+   "days": 12,
+   "end": "2019-03-08",
+   "start": "2019-02-25"
+  },
+  "FE_TRAIN": {
+   "camera_days": 29,
+   "classes_present": [
+    "B",
+    "C",
+    "D",
+    "E"
+   ],
+   "date_list_sha256": "f151d5bff97f00f74e88e4a600e8f0bbc64f34cf8120e0e6bdb9ddf487c2f7af",
+   "days": 30,
+   "end": "2019-02-14",
+   "start": "2019-01-16"
+  },
+  "REPRO": {
+   "camera_days": 14,
+   "classes_present": [
+    "A",
+    "B",
+    "C",
+    "D",
+    "E"
+   ],
+   "date_list_sha256": "1bc46341eaccfe744f67937e01de85a751e1715dcd6eaa33fb3a03c39d44d52f",
+   "days": 14,
+   "end": "2019-01-15",
+   "start": "2019-01-02"
+  }
+ },
+ "provenance_note": "2019 is entirely outside the training window (2020-01-01..2020-05-21), so the verification numbers are out-of-sample. But only 2019-01 differs from the earlier frozen final/ release (217 fields over 1,104 segments, 3 of them is_meaningless flags that change which boundaries are scored); 2019-02 and 2019-03 are bitwise identical.",
+ "schema_version": "cvtt_frontend_contract_v1",
+ "scope": "The front-end decision only: which instants are emitted as anchors. No agent, retrieval, service or delivery evaluator was run against these numbers.",
+ "source_hashes": {
+  "events": "eabd1687b1577617de1ae6802a82990d3af3c7ba64d99bd96bc699e098e0bc96",
+  "manifest": "39be7db02425c150c37054b06cef4135ac8cef52e36a8fc55899fb0cc7f52449",
+  "media_index": "716503118c89af8fe44061a34f8871b701ceefca163dd1ff193b820942e9b96d"
+ },
+ "source_release": "opstate-streaming-harness/data/releases/track_c_v8_2_2019_01_02_2020_06_full_raw_v1",
+ "status": "FROZEN_FOR_DOWNSTREAM_BENCHMARK",
+ "verification": {
+  "boundaries": 11526,
+  "expected_agent_calls": 19471,
+  "expected_f1": 0.5172113430331968,
+  "expected_precision": 0.41168917877869654,
+  "expected_recall": 0.6954711087975013,
+  "expected_visual_triggers": 12260,
+  "match_protocol": {
+   "lead_s": 32.0,
+   "note": "lead is the annotation's own uncertainty (frames arrive every ~32 s); dropping it rejects correct detections.",
+   "one_to_one": true,
+   "tolerance_s": 120.0
+  },
+  "observed_hours": 3556.895,
+  "reproduce": "cvtt_exp/scripts/p24_year_table.py",
+  "tolerance_note": "P23's printed theta was the rounded 1.927 and gave 19,468 calls; the unrounded dev-selected value used here gives 19,471. A three-call difference is the rounding, not a pipeline change.",
+  "window": [
+   "2019-01-02",
+   "2019-12-31"
+  ]
+ }
+}

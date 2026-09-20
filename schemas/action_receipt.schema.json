@@ -16,7 +16,9 @@
     "served_material_revision": {"type": "integer", "minimum": 0},
     "visible_at_epoch_ms": {"type": "integer"},
     "evidence_observation_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
-    "visible_ack_frame_count": {"type": "integer", "minimum": 2}
+    "visible_ack_frame_count": {"type": "integer", "minimum": 2},
+    "title": {"type": ["string", "null"], "description": "The card title this receipt stands for, so a later call can tell whether it is about to repeat it."},
+    "body": {"type": ["string", "null"], "description": "The card body this receipt stands for."}
   },
   "additionalProperties": false
 }

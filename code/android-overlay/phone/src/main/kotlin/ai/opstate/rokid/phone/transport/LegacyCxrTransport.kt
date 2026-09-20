@@ -348,7 +348,8 @@ class LegacyCxrTransport(
             val id=descriptor.capture_id
             if(requested[id]?.deadlineElapsedMs?.let {it<elapsedNow()}==true) {requested.remove(id);assemblies.remove(id);imageJobs.remove(id)?.cancel()}
             requested.putIfAbsent(id,CaptureCommand(sessionId,sessionEpoch,id,setOf("GLASSES_BUFFER"),deadlineElapsedMs=elapsedNow()+20_000))
-            bufferedMetadata[id]=message.payload.filterKeys {it in setOf("captured_phone_epoch_ms","source_session_id","capture_mode","trigger_types","glasses_battery_percent")}.let(::JsonObject)
+            bufferedMetadata[id]=message.payload.filterKeys {it in setOf("captured_phone_epoch_ms","source_session_id","capture_mode","trigger_types",
+                "front_end","front_end_score","front_end_seed_scores","glasses_battery_percent")}.let(::JsonObject)
         }
         if(requested[descriptor.capture_id]==null) return
         val pending=requested.getValue(descriptor.capture_id)

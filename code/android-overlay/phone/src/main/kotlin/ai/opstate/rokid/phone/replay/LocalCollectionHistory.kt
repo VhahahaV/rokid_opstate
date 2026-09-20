@@ -4,6 +4,7 @@ import ai.opstate.core.model.ObservationKind
 import ai.opstate.core.model.ObservationRecord
 import ai.opstate.protocol.StudyWire
 import ai.opstate.rokid.phone.data.StudyJournal
+import ai.opstate.rokid.phone.data.contextObservationKey
 import kotlinx.serialization.json.*
 
 data class LocalCollectionSummary(
@@ -78,10 +79,20 @@ class LocalCollectionRepository(private val journal: StudyJournal) {
     // rather than the event type that carried it. Accepting both also keeps notes written before the
     // writer used OBSERVATION_PERSISTED usable, which matters because the journal is append-only and
     // its chain hash covers the event type - those rows cannot be rewritten in place.
-    private fun contextRows(sessionId: String): List<JsonObject> = journal.dao.stream(sessionId,"observations")
-        .filter {it.eventType=="OBSERVATION_PERSISTED" || it.eventType=="SYNTHETIC_CONTEXT"}
-        .map {StudyWire.json.parseToJsonElement(it.canonicalJson).jsonObject}
-        .filter {it["kind"]==JsonPrimitive("SYNTHETIC_CONTEXT")}
+    private fun contextRows(sessionId: String): List<JsonObject> {
+        val withdrawn=journal.retractedContextObservations(sessionId)
+        return journal.dao.stream(sessionId,"observations")
+            .filter {it.eventType=="OBSERVATION_PERSISTED" || it.eventType=="SYNTHETIC_CONTEXT"}
+            .map {StudyWire.json.parseToJsonElement(it.canonicalJson).jsonObject}
+            .filter {it["kind"]==JsonPrimitive("SYNTHETIC_CONTEXT")}
+            // A note the ledger has withdrawn is not history any more, whichever copy of it this is.
+            .filter {row->row["observation_id"]?.jsonPrimitive?.contentOrNull?.let {it in withdrawn}!=true}
+            // A merged collection may contain the same source note once per imported segment. Keep one
+            // causal fact, not one copy per merge, and present it in event time rather than append order.
+            .distinctBy(::contextObservationKey)
+            .sortedWith(compareBy<JsonObject> {it["available_at_epoch_ms"]?.jsonPrimitive?.longOrNull ?: 0L}
+                .thenBy {it["occurred_at_epoch_ms"]?.jsonPrimitive?.longOrNull ?: 0L})
+    }
 
     private fun configuration(sessionId: String): JsonObject = journal.dao.stream(sessionId,"runtime_events")
         .firstOrNull {it.eventType=="SESSION_CONFIGURATION"}?.canonicalJson
@@ -97,6 +108,13 @@ class LocalCollectionRepository(private val journal: StudyJournal) {
         .filter {it["kind"]==JsonPrimitive("IMAGE") && it["quality_valid"]==JsonPrimitive(true) &&
             it["observation_id"]?.jsonPrimitive?.contentOrNull?.let {id->id in removed}!=true &&
             it["local_relative_path"]?.jsonPrimitive?.contentOrNull!=null && it["sha256"]?.jsonPrimitive?.contentOrNull!=null}
+        // Historical segments can be copied into the same merged collection several times. A
+        // hash and capture time identify that occurrence; preserve a genuinely later identical
+        // frame while removing copies of the same one. Then `takeLast` means recent capture time.
+        .distinctBy {it["sha256"]!!.jsonPrimitive.content to
+            (it["occurred_at_epoch_ms"]?.jsonPrimitive?.longOrNull ?: 0L)}
+        .sortedWith(compareBy<JsonObject> {it["occurred_at_epoch_ms"]?.jsonPrimitive?.longOrNull ?: 0L}
+            .thenBy {it["observation_id"]?.jsonPrimitive?.contentOrNull.orEmpty()})
         .toList()
     }
 

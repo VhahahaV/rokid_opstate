@@ -250,6 +250,13 @@ data class ActionReceipt(
     val servedMaterialRevision: Long,
     val visibleAtEpochMs: Long,
     val evidenceObservationIds: Set<String>,
+    /**
+     * What the card said. A receipt is the only record of what the wearer has already been shown,
+     * so a receipt that does not carry the text cannot support any judgement about a repeat - which
+     * is the judgement the whole receipt contract exists for.
+     */
+    val title: String? = null,
+    val body: String? = null,
 )
 
 data class DeliveryOutcome(

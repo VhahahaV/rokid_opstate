@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import ai.opstate.rokid.phone.data.readImportLedger
 import ai.opstate.rokid.phone.review.*
 import ai.opstate.rokid.phone.replay.DatasetReplayService
 import ai.opstate.rokid.phone.replay.LocalCollectionRepository
@@ -159,6 +160,7 @@ class MainActivity : ComponentActivity() {
                         scenarioAsset="",replayEnabled=false,startLiveAfterHistory=true,glassesCapture=true,syncBatchSize=options.syncBatchSize,
                         initialPositionMs=options.scenarioPositionMs,glassesDemoMode=options.demoMode,
                         shadowInference=options.shadowInference,mode=options.mode,captureIntervalMs=options.captureIntervalMs,forceService=options.forceService,
+                        frontEndEnabled=options.frontEndEnabled,
                         collectionHistorySessionId=options.collectionHistorySessionId,collectionHistoryImageLimit=options.collectionHistoryImageLimit))))}},
                 pause={operate {graph.studyRuntime.pauseSession()}},
                 syncPhotos={graph.studyRuntime.syncPhotos()},
@@ -175,6 +177,10 @@ class MainActivity : ComponentActivity() {
                 resume={operate {graph.studyRuntime.resumeSession()}},
                 seek={position->operate {graph.studyRuntime.seekTo(position).getOrThrow()}},
                 automaticCapture=graph.studyRuntime::setAutomaticCapture,demoMode=graph.studyRuntime::setGlassesDemoMode,
+                configureCapture={captureInterval,frontEndEnabled,batch->operate {
+                    graph.studyRuntime.configureCapture(captureInterval,frontEndEnabled,batch).getOrThrow()
+                    message("已更新拍照、上传与前端触发设置")
+                }},
                 addContext={input,done->operate {graph.studyRuntime.addSyntheticContext(input).getOrThrow();message("合成情境已加入，后续评估将使用这条信息");done()}},
                 forceService={enabled->operate {graph.studyRuntime.setForceService(enabled).getOrThrow();
                     message(if(enabled) "已开启强制服务：每次调用都会给出服务" else "已关闭强制服务")}},
@@ -290,30 +296,66 @@ class MainActivity : ComponentActivity() {
         viewState.update {it.copy(selectedSession=loaded,selectedTrial=null,busy=false)}
         message("已插入一条情境")
     }
+    /** The record a running session was seeded from, if any: its notes are pinned into that session. */
+    private fun liveHistorySource(): String? {
+        val live=graph.studyRuntime.state.value.sessionId ?: return null
+        return graph.journal.dao.stream(live,"runtime_events").firstOrNull {it.eventType=="SESSION_CONFIGURATION"}
+            ?.canonicalJson?.let {StudyWire.json.parseToJsonElement(it).jsonObject}
+            ?.get("collection_history_seed")?.jsonObject?.get("source_session_id")?.jsonPrimitive?.contentOrNull
+    }
     /**
-     * Imports context authored outside the app. The file is a JSON array of
-     * `{type,title,body,at_epoch_ms}`; it is removed once read so a stale file cannot be re-imported
-     * into another record.
+     * Reads the ledger authored outside the app and applies it. The file is a JSON array of
+     * `{type,title,body,at_epoch_ms}`, and a line carrying `retract: true` withdraws the note that was
+     * written with those same four fields instead of adding one.
+     *
+     * Withdrawals are applied first, whatever order the file is in, and an addition whose note is
+     * already there is skipped rather than repeated. Those two make the file safe to re-run, which is
+     * what the file's own life depends on: it is removed only when every line found its note, so a file
+     * that disagrees with the record stays put until the operator fixes it.
+     *
+     * The record must not be in use. A service session seeded from it holds those notes in memory and
+     * keeps pinning them into every request, so withdrawing one would not reach the model anyway.
      */
     private fun importRecordContext(id: String)=operate {
         val file=File(filesDir,"synthetic-import.json")
-        val added=withContext(Dispatchers.IO) {
+        val outcome=withContext(Dispatchers.IO) {
             check(file.isFile) { "SYNTHETIC_IMPORT_FILE_MISSING" }
-            val rows=StudyWire.json.parseToJsonElement(file.readText()).jsonArray
-            rows.forEach { row ->
-                val o=row.jsonObject
-                graph.journal.addSyntheticContext(id,
-                    o["type"]?.jsonPrimitive?.contentOrNull ?: "NOTE",
-                    o["title"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-                    o["body"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-                    o["at_epoch_ms"]?.jsonPrimitive?.longOrNull ?: error("SYNTHETIC_IMPORT_TIME_REQUIRED"))
+            check(graph.studyRuntime.state.value.sessionId!=id) { "RECORD_IN_USE" }
+            check(liveHistorySource()!=id) { "RECORD_SEEDS_RUNNING_SESSION" }
+            val ledger=readImportLedger(StudyWire.json.parseToJsonElement(file.readText()).jsonArray.map {it.jsonObject})
+            // A ledger line is one fact; the rows it names are that fact plus every copy a merge made of
+            // it, which is why the two are counted apart.
+            var facts=0;var copies=0;var withdrawnBefore=0;var added=0;var existing=0
+            val unmatched=mutableListOf<String>()
+            val now=System.currentTimeMillis()
+            ledger.retractions.forEach {line->
+                val result=graph.journal.retractSyntheticContext(id,line.type,line.title,line.body,line.atEpochMs,line.reason,now)
+                when {
+                    result==null -> unmatched+="${line.type} ${line.title}"
+                    else -> {
+                        if(result.retracted.isNotEmpty()) facts++
+                        copies+=result.retracted.size;withdrawnBefore+=result.alreadyRetracted.size
+                    }
+                }
             }
-            file.delete()
-            rows.size
+            ledger.additions.forEach {line->
+                if(graph.journal.hasSyntheticContext(id,line.type,line.title,line.body,line.atEpochMs)) existing++
+                else {graph.journal.addSyntheticContext(id,line.type,line.title,line.body,line.atEpochMs);added++}
+            }
+            // A line that found its note is spent, whether it wrote one or found it already there; only a
+            // line the record disagrees with keeps the file, so the operator can see what did not apply.
+            if(unmatched.isEmpty()) file.delete()
+            listOf(
+                if(facts>0) "已撤回 $facts 条情境（含合并副本 ${copies-facts} 处）" else null,
+                if(withdrawnBefore>0) "$withdrawnBefore 处此前已撤回" else null,
+                if(added>0) "导入 $added 条" else null,
+                if(existing>0) "跳过 $existing 条已存在" else null,
+                if(unmatched.isNotEmpty()) "${unmatched.size} 条未找到对应情境（${unmatched.first()}），文件保留以便修正" else null
+            ).filterNotNull().joinToString("，").ifBlank {"没有需要处理的条目"}
         }
         val loaded=withContext(Dispatchers.IO) {SessionReviewRepository(graph.journal).load(id)}
         viewState.update {it.copy(selectedSession=loaded,selectedTrial=null,busy=false)}
-        message("已导入 $added 条合成情境")
+        message(outcome)
     }
     private fun exportSession(id: String)=operate {
         pendingExport=withContext(Dispatchers.IO) {graph.journal.export(id)}
@@ -456,7 +498,8 @@ class MainActivity : ComponentActivity() {
             "BLUETOOTH_DISABLED" -> "系统蓝牙尚未打开。"
             "NO_SAVED_DEVICE" -> "尚无保存的设备，请先扫描附近眼镜。"
             "GLASSES_APP_HANDSHAKE_TIMEOUT" -> "眼镜研究应用尚未响应，请打开眼镜端 OPSTATE 应用。"
-            "RECORD_IN_USE" -> "这段记录正在采集中，结束采集后才能重命名、合并或删除。"
+            "RECORD_IN_USE" -> "这段记录正在采集中，结束采集后才能重命名、合并、撤回或删除。"
+            "RECORD_SEEDS_RUNNING_SESSION" -> "这段记录正被当前服务会话当作历史使用，先结束服务再撤回。"
             "PHOTO_BACKS_DELIVERED_SERVICE" -> "这张照片是一次已投递主动服务的画面，删除后无法再生成演示帧，已保留。"
             "PHOTO_NOT_FOUND" -> "这张照片已经不在记录里，列表已刷新。"
             "STOP_SESSION_BEFORE_MERGE" -> "只有已结束的记录才能合并。"

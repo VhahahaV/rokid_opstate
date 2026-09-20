@@ -26,6 +26,10 @@ class MainActivity : Activity() {
     private var displayed: GlassesCard?=null
     private var lastState: GlassesUiState?=null
     private var demoCollapsed=false
+    // The session whose page is on screen, so a new one can decide how it opens: a collection shows its
+    // status, a service session stays dark until the wearer taps.
+    private var renderedSessionId: String?=null
+    private var sessionModePending=false
     // Collection status is passive: it still renders, but must not hold the panel lit for a whole session.
     private var passiveStatus=false
     private var choosingPhone=false
@@ -97,6 +101,19 @@ class MainActivity : Activity() {
         if(state.card!=null && displayed==state.card && previous?.sessionId==state.sessionId && previous?.running==true && state.running) return
         visible?.close(); visible=null
         screenTap={primaryAction()}
+        if(state.sessionId!=null && state.sessionId!=renderedSessionId) {
+            renderedSessionId=state.sessionId
+            // The mode is not in the session id: it arrives with the capture configuration, a moment
+            // later. Deciding here would call every session a collection, so the page waits for it.
+            sessionModePending=true
+        }
+        if(state.sessionId!=null && sessionModePending && state.autonomousMode!=null) {
+            sessionModePending=false
+            // A collection opens on its status page; a service session opens silent and shows the same
+            // kind of page when the wearer taps - which is the only way to tell it is capturing at all.
+            demoCollapsed=state.autonomousMode=="SERVICE"
+        }
+        if(state.sessionId==null) {renderedSessionId=null;sessionModePending=false}
         hud.clear(); displayed=state.card
         // Cards are the only view that holds the panel; anything else renders and lets it sleep.
         passiveStatus=state.card==null
@@ -135,40 +152,50 @@ class MainActivity : Activity() {
             hud.support("眼镜待同步 ${state.bufferedPhotos} 张",2)
             hud.gap(20f)
             hud.footer("轻触侧边查找手机")
-        } else if(state.demoStatus!=null) {
-            val demo=state.demoStatus
-            if(demo.collection) {
-                passiveStatus=true
-                if(!demoCollapsed) {
-                    hud.eyebrow("OPSTATE · 采集")
-                    hud.gap(12f)
-                    hud.hero(demo.phase,2)
-                    hud.gap(12f)
-                    hud.support("手机 ${demo.captures} 张 · 待同步 ${state.bufferedPhotos} 张",2)
-                    hud.gap(8f)
-                    hud.meta("每 ${demo.intervalSeconds} 秒拍摄")
-                    hud.gap(20f)
-                    hud.footer("单击收起 · 双击返回桌面\n采集继续，停止请在手机结束")
-                }
-                updateDisplayPolicy()
-                return
-            }
-            hud.eyebrow("OPSTATE")
-            hud.gap(12f)
-            hud.hero(demo.phase,2)
+        } else if(state.demoStatus?.collection==true) {
+            val demo=requireNotNull(state.demoStatus)
+            passiveStatus=true
             if(!demoCollapsed) {
-                hud.gap(14f)
-                hud.meta("当前情境")
-                hud.gap(6f)
-                // The status view carries two footers, so its body gets fewer lines than a card's.
-                hud.support(demo.context,7)
-                hud.gap(14f)
-                hud.meta("${demo.captures} 次观察    ${demo.receipts} 条服务回执")
+                hud.eyebrow("OPSTATE · 采集")
+                hud.gap(12f)
+                hud.hero(demo.phase,2)
+                hud.gap(12f)
+                hud.support("手机 ${demo.captures} 张 · 待同步 ${state.bufferedPhotos} 张",2)
                 hud.gap(8f)
-                hud.footer(if(demo.automaticCapture) "每 60 秒自动观察 · 手机可手动拍照" else "自动观察已关闭 · 手机可手动拍照")
+                hud.meta("每 ${demo.intervalSeconds} 秒拍摄")
+                hud.gap(20f)
+                hud.footer("单击收起 · 双击返回桌面\n采集继续，停止请在手机结束")
             }
-            hud.gap(20f)
-            hud.footer("单击收起 · 双击返回桌面")
+            updateDisplayPolicy()
+            return
+        } else if(state.autonomousMode=="SERVICE" || state.demoStatus!=null) {
+            // A service session owns a page of its own. What it says about capture comes from the glasses
+            // themselves - cadence, queue, front end - so the wearer sees the same thing whether or not
+            // the phone has anything to say; the phone's phase and counts are added when it does.
+            val demo=state.demoStatus
+            passiveStatus=true
+            if(!demoCollapsed) {
+                hud.eyebrow("OPSTATE · 在线服务")
+                hud.gap(12f)
+                hud.hero(demo?.phase ?: if(state.paused) "已暂停" else "服务进行中",2)
+                hud.gap(12f)
+                hud.support("眼镜已拍 ${state.localCaptures} 张 · 待同步 ${state.bufferedPhotos} 张",2)
+                hud.gap(8f)
+                hud.meta("每 ${state.captureIntervalMs/1000} 秒拍摄 · ${if(state.frontEndEnabled) "前端已开启" else "前端已关闭"}")
+                if(demo!=null) {
+                    hud.gap(14f)
+                    hud.meta("当前情境")
+                    hud.gap(6f)
+                    // The status view carries two footers, so its body gets fewer lines than a card's.
+                    hud.support(demo.context,4)
+                    hud.gap(14f)
+                    hud.meta("${demo.captures} 次观察    ${demo.receipts} 条服务回执")
+                }
+                hud.gap(20f)
+                hud.footer("单击收起 · 双击返回桌面")
+            }
+            updateDisplayPolicy()
+            return
         }
         // An active session with no card is intentionally a completely black, silent view.
         updateDisplayPolicy()

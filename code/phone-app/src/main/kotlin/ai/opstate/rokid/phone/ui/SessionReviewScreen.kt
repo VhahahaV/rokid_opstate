@@ -103,6 +103,10 @@ import java.util.Locale
                     Text("${review.photos.size} 张照片 · ${review.contexts.size} 条情境 · ${photoTime(review.session.startedAtEpochMs)}",color=Quiet)
                     if(review.deletedPhotos>0) Text("已删除 ${review.deletedPhotos} 张 · 删除记录仍保存在原始日志里",
                         style=MaterialTheme.typography.bodySmall,color=Quiet)
+                    // Withdrawn notes, and the copies the merge had made of them. Said here for the same
+                    // reason the deletions are: what the page draws is smaller than what the record holds.
+                    if(review.retractedContexts>0) Text("已撤回 ${review.retractedContexts} 条情境 · 撤回记录仍保存在原始日志里",
+                        style=MaterialTheme.typography.bodySmall,color=Quiet)
                     Text("按时间排版；情境与照片同列显示。",style=MaterialTheme.typography.bodySmall,color=Quiet)
                     Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                         Button(export,enabled=!busy && review.verified && review.phase in setOf("STOPPED","PAUSED")) {Text("导出原图与记录")}
@@ -249,7 +253,7 @@ private fun responseContent(raw: JsonObject?): JsonElement?=raw?.string("raw_res
 }
 private fun time(epoch: Long,pattern: String="yyyy.MM.dd  HH:mm:ss")=SimpleDateFormat(pattern,Locale.CHINA).format(Date(epoch))
 internal fun decisionLabel(value: String?)=when(value) {"SERVICE"->"服务";"NO_SERVICE"->"沉默";else->"待查"}
-internal fun deliveryLabel(value: String?)=when(value) {"DISPLAY_VISIBLE"->"已在眼镜实际显示";"REPLAY_NOT_DELIVERED"->"回放 · 未投递";"NO_SERVICE_SILENCE"->"眼镜保持沉默";"SUPPRESSED_BY_RECEIPT"->"已抑制重复服务";null->"未记录投递结果";else->value}
+internal fun deliveryLabel(value: String?)=when(value) {"DISPLAY_VISIBLE"->"已在眼镜实际显示";"REPLAY_NOT_DELIVERED"->"回放 · 未投递";"NO_SERVICE_SILENCE"->"眼镜保持沉默";"SUPPRESSED_BY_RECEIPT"->"已抑制重复服务";"UNGROUNDED"->"未落到记录上，未显示";null->"未记录投递结果";else->value}
 
 /** Order toggle plus the two ways context enters a record: typed here, or imported from a file. */
 @Composable private fun TimelineToolbar(descending: Boolean,onToggle: ()->Unit,insertOpen: ()->Unit,importContext: ()->Unit,enabled: Boolean) {

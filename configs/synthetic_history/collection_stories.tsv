@@ -1,0 +1,42 @@
+id	story	at	phase	type	title	body
+mt01	meeting	2026-09-16 17:05	followup	MESSAGE	李明	会开完了。行动项我记在群公告里，第三条是你补第二组的图。
+n01	noise	2026-09-16 17:25	background	MESSAGE	校园卡	本月消费明细可以在校园卡小程序查看。
+n03	noise	2026-09-16 18:56	background	EMAIL	学院教务 · 周五开放讲座	周五下午三点在图书馆报告厅有一场开放讲座，自愿参加，不用报名。
+n02	noise	2026-09-16 19:35	background	MESSAGE	同学	周末羽毛球场要提前预约，想打的话今晚告诉我。
+ex01	experiment	2026-09-16 20:20	setup	MESSAGE	同门	第二组的配置我按上周的模板搭好了，seed 写在 config 里。
+n04	noise	2026-09-16 22:11	background	MESSAGE	快递柜	您的包裹已放在 3 号楼 1 层快递架，取件码 7-2-4417。
+ex02	experiment	2026-09-16 22:40	progress	MESSAGE	同门	配置我看过了，跟第一组只差 seed，可以先跑一版。
+ex03	experiment	2026-09-17 08:30	progress	MESSAGE	同门	共享盘上那份是昨天的版本，跑之前看一眼参数。
+n05	noise	2026-09-17 09:00	background	MESSAGE	天气	今天午后可能有阵雨，出门带把伞。
+mt02	meeting	2026-09-17 09:30	followup	MESSAGE	李明	昨天说的第二组，今天有进展发我一句就行。
+n06	noise	2026-09-17 11:46	background	MESSAGE	同学	中午食堂二楼人多，楼下窗口排队短些。
+ex04	experiment	2026-09-17 13:35	progress	MESSAGE	同门	第二组输出目录建好了，图表模板沿用第一组。
+n07	noise	2026-09-17 14:05	background	EMAIL	摄影社 · 周末招新	周末在操场有新生活动，器材可以现场试，感兴趣就来看看。
+ex05	experiment	2026-09-17 16:25	progress	MESSAGE	同门	首批输出出来了，前两百步的曲线看着正常。
+sf01	safety	2026-09-17 17:35	followup	MESSAGE	实验室群	培训资料发到群文件了，消防那几页可以回放。
+n08	noise	2026-09-17 18:28	background	MESSAGE	室友	洗衣机空出来了，晚上有空再用。
+ex06	experiment	2026-09-17 20:40	risk	NOTE	异常点	第二组有一项指标跳了一下，原始日志先留着。
+n08b	noise	2026-09-17 21:15	background	MESSAGE	同学	明晚球场见？我订了七点的场。
+n09	noise	2026-09-18 08:17	background	MESSAGE	校车	本周末校车按假期时刻表运行。
+pm01	maintenance	2026-09-18 09:00	setup	NOTE	机房	晚上走之前把输出收尾，机器别开着过夜。
+ex07	experiment	2026-09-18 09:35	progress	MESSAGE	同门	复跑完了，日志在共享目录的第二组文件夹。
+n10	noise	2026-09-18 11:08	background	EMAIL	图书馆 · 文献检索讲座	下周三晚有一场文献检索讲座，需要的话在系统里报名。
+ex08	experiment	2026-09-18 11:40	progress	NOTE	记录补写	参数说明还差一段，写完导 PDF 发王老师。
+n11	noise	2026-09-18 13:48	background	MESSAGE	同学	午饭照片发群里了，你晚上再看。
+ex09	experiment	2026-09-18 15:05	progress	MESSAGE	同门	异常点我复现了一次，还是在同一个位置。
+n12	noise	2026-09-18 17:51	background	MESSAGE	校园超市	饮料第二件半价，今晚结束。
+n13	noise	2026-09-18 19:12	background	NOTE	生活杂项	洗衣液快用完了，下次去超市顺手买。
+pm02	maintenance	2026-09-18 20:05	progress	MESSAGE	同门	共享盘备份完了，机房那台可以按正常流程收尾。
+pm03	maintenance	2026-09-18 21:20	followup	MESSAGE	周航	机房我锁门了，你那台我看了，是关着的。
+n14	noise	2026-09-18 21:45	background	MESSAGE	同学	周末篮球赛改到室内馆，看群公告。
+n15	noise	2026-09-19 08:28	background	EMAIL	研究生院 · 课程通知	下周的阅读材料已上传平台，周一课前看完即可。
+ex10	experiment	2026-09-19 10:20	followup	MESSAGE	同门	第二组的日志我归档了，目录名带日期。
+n18	noise	2026-09-19 11:20	background	MESSAGE	校园跑	本周运动记录已同步，详情见小程序。
+n16	noise	2026-09-19 12:50	background	MESSAGE	快递柜	还有一件包裹在柜里，今天取走就行。
+n19	noise	2026-09-19 13:40	background	EMAIL	图书馆 · 讲座回放	上周讲座的视频已上传，随时可以看。
+rm01	study_room	2026-09-19 14:35	setup	NOTE	晚上安排	想找个安静地方写材料，学生中心三楼那几间可以约。
+n17	noise	2026-09-19 15:12	background	MESSAGE	室友	桌上的充电线是我的，晚上帮我放抽屉。
+rm02	study_room	2026-09-19 16:48	progress	CALENDAR	交流研讨室 C-311	18:00–22:00 · 学生中心三楼
+rm03	study_room	2026-09-19 17:31	progress	MESSAGE	同学	我晚点也去学生中心，你先吃饭，出发前说一声。
+rm04	study_room	2026-09-19 18:12	progress	MESSAGE	同学	我先上三楼了，你到了说一声。
+n20	noise	2026-09-19 19:00	background	MESSAGE	超市优惠	咖啡券明天过期，可在店里用。

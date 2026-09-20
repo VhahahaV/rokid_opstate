@@ -57,6 +57,9 @@ data class WireReceipt(
     @SerialName("visible_at_epoch_ms") val visibleAtEpochMs: Long,
     @SerialName("evidence_observation_ids") val evidenceObservationIds: Set<String>,
     @SerialName("visible_ack_frame_count") val visibleAckFrameCount: Int = 2,
+    /** The card this receipt stands for. Without it a receipt cannot answer "have I said this already?". */
+    val title: String? = null,
+    val body: String? = null,
 )
 
 @Serializable
@@ -98,6 +101,8 @@ fun InferenceRequest.toWire() = WireInferenceRequest(
             servedMaterialRevision = it.servedMaterialRevision,
             visibleAtEpochMs = it.visibleAtEpochMs,
             evidenceObservationIds = it.evidenceObservationIds,
+            title = it.title,
+            body = it.body,
         )
     },
     promptHash,

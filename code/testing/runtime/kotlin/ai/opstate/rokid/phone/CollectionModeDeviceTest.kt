@@ -16,7 +16,11 @@ import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -26,6 +30,35 @@ import java.util.concurrent.CopyOnWriteArrayList
 /** Real actor, Room and image persistence; only the glasses transport and model are controlled fixtures. */
 @RunWith(AndroidJUnit4::class)
 class CollectionModeDeviceTest {
+    @Test fun runningServiceAppliesCaptureBatchAndFrontEndSettingsToGlasses()=runBlocking {
+        val context=InstrumentationRegistry.getInstrumentation().targetContext
+        val database=Room.inMemoryDatabaseBuilder(context,StudyDatabase::class.java).build()
+        val journal=StudyJournal(context,database);val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
+        val transport=RuntimeLifecycleDeviceTest.FixtureTransport();val engine=StudyRuntimeEngine(context,scope,transport,journal,{""},inferenceOverride={HistoryModel()})
+        var id: String?=null
+        suspend fun await(check: ()->Boolean)=withTimeout(5_000) {while(!check()) delay(20)}
+        try {
+            transport.events.subscriptionCount.first {it>0}
+            engine.start(SessionSetup("LIVE_SETTINGS","unused://service",expectedModelId="collection-history-fixture",
+                glassesCapture=true,mode=SessionMode.SERVICE,captureIntervalMs=60_000,syncBatchSize=60,frontEndEnabled=true)).getOrThrow()
+            id=requireNotNull(engine.state.value.sessionId)
+            await {transport.sent.any {it.type=="CONFIGURE_CAPTURE"}}
+            // The upload is counted in images, so the batch is one of the settings that can change while
+            // a session runs - there is no upload interval to set alongside it.
+            engine.configureCapture(30_000,false,6).getOrThrow()
+            await {transport.sent.count {it.type=="CONFIGURE_CAPTURE"}>=2}
+            val config=transport.sent.last {it.type=="CONFIGURE_CAPTURE"}.payload
+            assertEquals(30_000L,config.getValue("interval_ms").jsonPrimitive.long)
+            assertEquals(6,config.getValue("batch_size").jsonPrimitive.int)
+            // The front end is the phone's own now: the glasses are told the cadence and the batch, and
+            // nothing else, because what happens to a frame is decided where the frame ends up.
+            assertFalse(config.containsKey("front_end_enabled"))
+            assertEquals(30_000L,engine.state.value.captureIntervalMs)
+            assertEquals(6,engine.state.value.syncBatchSize)
+            assertFalse(engine.state.value.frontEndEnabled)
+            assertTrue(database.dao().stream(id,"runtime_events").any {it.eventType=="CAPTURE_CONFIGURATION_CHANGED"})
+        } finally {runCatching {engine.stopSession()};scope.coroutineContext.job.cancelAndJoin();id?.let(journal::delete);database.close()}
+    }
     @Test fun bufferedCollectionPersistsBeforeCommitDeduplicatesAndDrainsBeforeStopping()=runBlocking {
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         val database=Room.inMemoryDatabaseBuilder(context,StudyDatabase::class.java).build()
