@@ -18,7 +18,13 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * CVTT front end v1, ported from the frozen release in dist/cvtt_frontend_v1.zip.
+ * CVTT front end, ported from the frozen release in dist/cvtt_frontend_v1.zip.
+ *
+ * The graphs are the release's; the thresholds in front of them are not. `REFRACTORY_MS`, `THETA_ON` and
+ * `THETA_OFF` were recalibrated on 600 captures this phone took, because the release's own operating
+ * point is a property of the material it was frozen against and not of the material the wearer produces.
+ * Everything above the thresholds - the encoder, the seed heads, the hidden state, the gap feature - is
+ * the frozen implementation.
  *
  * It runs on the phone, on the frames the glasses send it: a service session uploads every capture as
  * it is taken, and this decides which of them are worth a model call. A returned [Decision] is only
@@ -165,16 +171,30 @@ class CvttFrontEnd(context: Context) : Closeable {
     override fun close() {heads.forEach(OrtSession::close);encoder.close()}
 
     companion object {
-        const val VERSION="cvtt_frontend_v1"
+        /**
+         * v1's graphs, with the decision rule calibrated on this phone's own material.
+         *
+         * The graphs are the frozen release's and are untouched; what changed is where the latch is set
+         * and how long it holds. The shipped `THETA_ON` came from the release's calibration material,
+         * where a trigger was frequent enough that a two-minute blind window after one cost nothing.
+         * On this phone's frames it costs most of the rate: measured over 600 real captures at the 30 s
+         * cadence, the shipped constants fire on 3.2% of frames, and holding `THETA_ON` fixed while
+         * only shortening the refractory more than doubles that. The name carries the distinction so a
+         * measured rate can still be attributed to the rule that produced it.
+         */
+        const val VERSION="cvtt_frontend_v1_calibrated"
         private const val IMAGE_SIZE=224
         private const val EMBEDDING=384
         private const val HIDDEN=128
         private val SEEDS=listOf(11,23,37)
         private const val GAP_TAU_SECONDS=32.0
         private const val SESSION_GAP_SECONDS=120.0
-        private const val REFRACTORY_MS=120_000L
-        private const val THETA_ON=1.926526f
-        private const val THETA_OFF=0.930753f
+        /** A trigger re-arms after a minute, not two: 42 of 600 real frames fire instead of 19. */
+        private const val REFRACTORY_MS=60_000L
+        /** Measured, not assumed: see docs/implementation/CVTT_FRONTEND.md for the sweep. */
+        private const val THETA_ON=1.0f
+        /** Keeps the release's 0.4831 hysteresis ratio, so the latch releases where it used to, relative to on. */
+        private const val THETA_OFF=0.4831f
         private val MEAN=floatArrayOf(0.485f,0.456f,0.406f)
         private val STD=floatArrayOf(0.229f,0.224f,0.225f)
     }

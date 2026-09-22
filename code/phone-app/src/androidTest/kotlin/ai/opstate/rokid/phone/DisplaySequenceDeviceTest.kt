@@ -14,6 +14,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.*
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
@@ -36,7 +37,13 @@ class DisplaySequenceDeviceTest {
         val dir=File(app.filesDir,"validation").apply {mkdirs()}
         val signal=File(dir,"display-pixel.signal").apply {delete()}
         val device=app.link.savedDevice() ?: error("SELECT_STUDY_GLASSES_FIRST")
-        app.transport.connect(RokidDevice(device.address,device.name,true)).getOrThrow()
+        // The app reopens the saved glasses as it starts, and the instrumentation restarts it, so the
+        // handshake is given its time before this test opens a link of its own: a second connect while
+        // the first is still coming up is what the SDK refuses, and it reports that as a disconnect.
+        runCatching {withTimeout(45_000) {app.transport.ready.first {it}}}.onFailure {
+            app.transport.connect(RokidDevice(device.address,device.name,true)).getOrThrow()
+            withTimeout(30_000) {app.transport.ready.first {it}}
+        }
         app.transport.refreshPeer().getOrThrow()
         val id="display-sequence-${UUID.randomUUID()}";val epoch=System.currentTimeMillis()
         val modelService=RealHardwareLoopDeviceTest.LocalModel(DecisionLabel.SERVICE)

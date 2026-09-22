@@ -12,12 +12,17 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * Optional device parity gate for the frozen v1 release. It uses the 18 supplied frames against the
+ * Optional device parity gate for the frozen v1 graphs. It uses the 18 supplied frames against the
  * actual ONNX sessions, on the phone, which is where the front end runs now. Running it is opt-in
  * because loading the 115 MB encoder is not a normal smoke check:
  *
  * adb shell am instrument -w -e cvtt true -e class ai.opstate.rokid.phone.CvttFrontEndDeviceTest \
  *   ai.opstate.rokid.phone.test/androidx.test.runner.AndroidJUnitRunner
+ *
+ * The score column is the graphs' and is asserted at 0.005; the decision column is the calibrated
+ * rule's, derived from that same score column, so recalibrating the thresholds rewrites one file rather
+ * than failing this gate. Keeping both columns means a run can still say which frames the release
+ * itself would have fired on.
  */
 @RunWith(AndroidJUnit4::class)
 class CvttFrontEndDeviceTest {

@@ -459,7 +459,13 @@ class GlassesStudyService : Service() {
                 // only refreshes periodically, which mostly feeds the phone's countdown display.
                 if(statusSignature()!=lastStatusSignature || now-lastBufferStatus>=STATUS_REFRESH_MS) sendBufferStatus()
             } else updateBufferUi()
-            if((automatic && !paused) || flushing) wakeLock?.acquire() else wakeLock?.takeIf {it.isHeld}?.release()
+            // Kept awake while there is still something to do, and that includes waiting for the phone to
+            // come back. A link that drops stops the capture loop, so a lock keyed only off capturing was
+            // released the moment the link went - and a glasses app that is asleep cannot answer the
+            // handshake the phone is retrying, which is how a drop turns into a link that never returns.
+            // A session with no link is the one moment the CPU is worth spending on.
+            if((automatic && !paused) || flushing || (heartbeatLost && activeSession!=null)) wakeLock?.acquire()
+            else wakeLock?.takeIf {it.isHeld}?.release()
         }
     }
     private fun eligiblePhotos()=buffer.entries().filter {autonomousMode=="COLLECTION" || it.descriptor.session_id==activeSession}

@@ -137,7 +137,7 @@ class ServiceCaptureParityDeviceTest {
             val row=database.dao().stream(id,"observations")
                 .map {StudyWire.json.parseToJsonElement(it.canonicalJson).jsonObject}
                 .single {it["observation_id"]?.jsonPrimitive?.contentOrNull=="obs-judged-frame"}
-            assertEquals("cvtt_frontend_v1",row["front_end"]?.jsonPrimitive?.contentOrNull)
+            assertEquals("cvtt_frontend_v1_calibrated",row["front_end"]?.jsonPrimitive?.contentOrNull)
             assertNotNull("the front end reports a score for every frame it judges",row["front_end_score"]?.jsonPrimitive?.contentOrNull)
             // Whether it fired or not, the mark is there and the photograph is kept either way.
             assertTrue(row.containsKey("trigger_types"))
@@ -180,7 +180,7 @@ class ServiceCaptureParityDeviceTest {
                 .single {it["observation_id"]?.jsonPrimitive?.contentOrNull=="obs-flat-frame"}
             assertEquals("the pixel metrics are recorded as they always were","BLURRY",
                 row["quality_status"]?.jsonPrimitive?.contentOrNull)
-            assertEquals("and the front end judged the frame regardless","cvtt_frontend_v1",
+            assertEquals("and the front end judged the frame regardless","cvtt_frontend_v1_calibrated",
                 row["front_end"]?.jsonPrimitive?.contentOrNull)
             assertNotNull(row["front_end_score"]?.jsonPrimitive?.contentOrNull)
             assertTrue("the frame is kept",row.containsKey("local_relative_path"))

@@ -44,7 +44,12 @@ class StudyRuntimeService : Service() {
             NotificationChannel("opstate-runtime","OPSTATE 采集与服务",NotificationManager.IMPORTANCE_LOW))
         foreground("正在准备")
         wakeLock=getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"OPSTATE:collection").apply {setReferenceCounted(false)}
-        scope.launch {engine.state.map {it.sessionId!=null && it.phase !in setOf("PAUSED","HISTORY_READY","ERROR")}.distinctUntilChanged().collect {active->
+        // Held whenever the session is doing something the wearer asked for, and also while it is waiting
+        // for the glasses link to come back. That second case is the one that matters: losing the link
+        // pauses the session, and a lock keyed only off the running phases was released at exactly the
+        // moment the engine needed the CPU most - with the screen off the device then slept through the
+        // reconnect backoff and the link never returned.
+        scope.launch {engine.state.map {it.holdsCpu()}.distinctUntilChanged().collect {active->
             if(active) wakeLock?.acquire() else wakeLock?.takeIf {it.isHeld}?.release()
             if(active && !locationTracking && locationForeground && hasLocationPermission()) {
                 try {

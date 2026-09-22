@@ -83,7 +83,13 @@ data class RuntimeViewState(val phase: String="IDLE",val sessionId: String?=null
     val glassesCapture: Boolean=false,val bufferedPhotos: Int=0,val glassesCaptures: Int=0,val glassesFreeBytes: Long?=null,val syncBatchSize: Int=60,val syncing: Boolean=false,
     val frontEndEnabled: Boolean=true,val frontEndVersion: String?=null,
     /** Whether the running session asks the model for a service on every call. */
-    val forceService: Boolean=false)
+    val forceService: Boolean=false,
+    /**
+     * A session is waiting for the glasses link to come back. The foreground service holds the CPU
+     * awake for this: recovery is the one moment the engine cannot afford to be descheduled, and it
+     * is exactly when the phase reads as paused.
+     */
+    val awaitingLink: Boolean=false)
 
 /**
  * Whether the photographs on screen have to be re-read after a state change.
@@ -95,6 +101,17 @@ data class RuntimeViewState(val phase: String="IDLE",val sessionId: String?=null
  * glasses. It is a function so the rule can be tested without a device, because nothing about the
  * screen looks wrong when it is broken - the strip simply keeps showing what it read too early.
  */
+/**
+ * Whether the runtime is doing something the CPU must not be descheduled out of.
+ *
+ * A session that is merely paused by the operator is idle and may let the device sleep. A session that
+ * is paused *because the link dropped* is the opposite: the reconnect backoff and the CXR handshake are
+ * the only things standing between the wearer and a session that never comes back, and with the screen
+ * off a sleeping CPU is exactly what stops them running. Reading that state as "idle" was the bug.
+ */
+fun RuntimeViewState.holdsCpu(): Boolean =
+    sessionId!=null && (awaitingLink || phase !in setOf("PAUSED","HISTORY_READY","ERROR"))
+
 fun RuntimeViewState.requiresPhotoReload(previous: RuntimeViewState,photosEmpty: Boolean): Boolean =
     sessionId!=previous.sessionId || liveCaptures!=previous.liveCaptures ||
         deletedCaptures!=previous.deletedCaptures || decisions!=previous.decisions ||
@@ -144,6 +161,8 @@ class StudyRuntimeEngine(
         var captureAckReceived=false
         var model: PendingModel?=null;var modelJob: Job?=null;var delivery: PendingDelivery?=null
         var serviceVisible=false;var visibleDecisionId: String?=null;var paused=false;var resumeOnReconnect=false;var phoneInteractionAt=0L
+        /** Until this instant, a service the operator asked for may take the display without waiting for it. */
+        var operatorClaimUntilElapsed=0L
         /** Whether this session currently asks the model for a service on every call. */
         var forceService=setup.forceService
         var observationCount=0;var packetCount=0
@@ -202,8 +221,10 @@ class StudyRuntimeEngine(
                     is Event.Seek -> seek(event)
                     is Event.SeekHistory -> seekHistory(event)
                     is Event.ContextInput -> {addContext(event.input);event.reply.complete(Result.success(Unit))}
-                    is Event.EvaluatePhoto -> {chosenPhoto(chosenSession(),event.photo);event.reply.complete(Result.success(Unit))}
-                    is Event.EvaluateContext -> {evaluateNow(chosenSession(),addContext(event.input));event.reply.complete(Result.success(Unit))}
+                    is Event.EvaluatePhoto -> {val session=chosenSession();handOverToOperator(session,"MANUAL_PHOTO")
+                        chosenPhoto(session,event.photo);event.reply.complete(Result.success(Unit))}
+                    is Event.EvaluateContext -> {val session=chosenSession();handOverToOperator(session,"MANUAL_CONTEXT")
+                        evaluateNow(session,addContext(event.input));event.reply.complete(Result.success(Unit))}
                     is Event.SetForceService -> {applyForceService(event.enabled);event.reply.complete(Result.success(Unit))}
                     is Event.ConfigureCapture -> {configureCapture(event);event.reply.complete(Result.success(Unit))}
                     is Event.DeletePhoto -> active?.let {session->event.reply.complete(runCatching {deletePhoto(session,event.observationId)})}
@@ -216,7 +237,8 @@ class StudyRuntimeEngine(
                         _state.update {it.copy(glassesDemoMode=event.enabled)};sendDemoStatus(session)}
                     Event.Tick -> tick()
                     Event.Interaction -> active?.phoneInteractionAt=SystemClock.elapsedRealtime()
-                    Event.CaptureNow -> active?.let {capture(it,setOf(CaptureReason.MANUAL_DEBUG))}
+                    Event.CaptureNow -> active?.let {session->handOverToOperator(session,"MANUAL_CAPTURE")
+                        capture(session,setOf(CaptureReason.MANUAL_DEBUG))}
                     Event.SyncPhotos -> active?.let {transport.command(transport.controlMessage("FLUSH_CAPTURE_BUFFER")).getOrThrow()}
                 }
             } catch(error: Exception) {
@@ -640,6 +662,7 @@ class StudyRuntimeEngine(
                     if(session.setup.replayEnabled) session.playback.pause(SystemClock.elapsedRealtime())
                     cancelPendingWork(session,"CONNECTION_LOST")
                     session.sensor=null
+                    _state.update {it.copy(awaitingLink=true)}
                     updatePhase(session);checkpoint(session)
                 }
             }
@@ -812,8 +835,16 @@ class StudyRuntimeEngine(
     }
     private fun kickModel(session: Session) {
         if(session.setup.mode!=SessionMode.SERVICE) return
-        if(session.paused || session.model!=null || session.queue.isEmpty() || session.delivery!=null || session.serviceVisible ||
-            session.sensor?.contextCardVisible==true || session.sensor?.serviceCardVisible==true || !transport.ready.value) return
+        if(session.paused || session.model!=null || session.queue.isEmpty() || !transport.ready.value) return
+        // The display normally belongs to the card that is on it, and everything waits for it to go. What
+        // does not wait is a service the operator asked for: they cleared the display when they pressed,
+        // and the glasses may not have confirmed it yet, so their card takes the display on their word
+        // rather than on a status report that is still catching up. The claim expires, so a press whose
+        // capture failed cannot hand the next automatic trigger a display that is genuinely busy.
+        val operatorClaim=SystemClock.elapsedRealtime()<=session.operatorClaimUntilElapsed
+        if(!operatorClaim && (session.delivery!=null || session.serviceVisible ||
+            session.sensor?.contextCardVisible==true || session.sensor?.serviceCardVisible==true)) return
+        if(operatorClaim) session.operatorClaimUntilElapsed=0L
         val pending=session.queue.removeFirst();session.model=pending
         _state.update {it.copy(latestPacketId=pending.packet.packetId)}
         val token=generation
@@ -924,6 +955,7 @@ class StudyRuntimeEngine(
         val session=active ?: return
         if(!session.paused) return
         session.resumeOnReconnect=false
+        _state.update {it.copy(awaitingLink=false)}
         check(transport.ready.value) {"CONNECT_GLASSES_FIRST"}
         val peer=transport.refreshPeer().getOrThrow()
         if(session.peerBuild!=null && peer!=null && session.peerBuild!=peer) {
@@ -1174,6 +1206,49 @@ class StudyRuntimeEngine(
         endPendingDelivery(session,"DISPLAY_FAILED",reason,now)
         session.model=null;session.queue.clear();session.packetEpisodes.clear();session.capture=null;session.captureRetry=0
         session.serviceVisible=false;session.visibleDecisionId=null
+    }
+    /**
+     * The operator asked for a service. What is on the glasses, and what the engine is still doing for
+     * an earlier frame, gives way to it.
+     *
+     * A card that is already up is cleared rather than waited out. It was produced for a frame the
+     * operator has moved past, and waiting for its display window was measured as the larger half of the
+     * delay between pressing the control and seeing the answer: pressing into a displayed card took
+     * 11.7 s and pressing into a clear screen 5.7 s, with every other stage identical between the two.
+     * An evaluation still in flight is abandoned for the same reason - it cannot be what the press was
+     * about - and its HTTP call is cancelled with it, so nothing is left running behind the answer.
+     *
+     * An automatic trigger never does this. It arrives on its own, has no claim on the display, and
+     * queues behind whatever is showing; that is what keeps cards from stacking on each other.
+     *
+     * A card that was already acknowledged keeps its receipt. It really was displayed, and the record
+     * has to say so; the model is what decides whether saying it again is worth anything.
+     */
+    private suspend fun handOverToOperator(session: Session,reason: String) {
+        if(session.setup.mode!=SessionMode.SERVICE) return
+        val now=System.currentTimeMillis()
+        val cleared=session.serviceVisible || session.delivery!=null || session.sensor?.serviceCardVisible==true
+        session.modelJob?.cancelAndJoin();session.modelJob=null
+        session.model?.let {journal.append(session.id,"runtime_events","INFERENCE_CANCELLED",StudyWire.payload(
+            "request_id" to it.request.requestId,"packet_id" to it.packet.packetId,"code" to reason),now)}
+        session.queue.forEach {journal.append(session.id,"runtime_events","PACKET_EVALUATION_CANCELLED",StudyWire.payload(
+            "packet_id" to it.packet.packetId,"code" to reason),now)}
+        endPendingDelivery(session,"DISPLAY_FAILED",reason,now)
+        session.model=null;session.queue.clear();session.packetEpisodes.clear()
+        if(cleared) {
+            transport.command(transport.controlMessage("CLEAR_SERVICE_CARD"))
+            journal.append(session.id,"runtime_events","SERVICE_CARD_PREEMPTED",StudyWire.payload("code" to reason),now)
+        }
+        // Long enough to cover the capture and the request that follow a press, short enough that a press
+        // whose capture never arrives cannot leave the display open to the next automatic trigger.
+        session.operatorClaimUntilElapsed=SystemClock.elapsedRealtime()+15_000
+        session.serviceVisible=false;session.visibleDecisionId=null
+        // The engine's belief about the glasses, corrected to match the clear it just asked for: the
+        // glasses confirm it in their next status window, and until then a stale "a card is showing"
+        // would hold this press behind a card that is already gone. A context card is left alone - the
+        // operator staged that one deliberately and CLEAR_SERVICE_CARD does not touch it.
+        session.sensor=session.sensor?.copy(serviceCardVisible=false)
+        updatePhase(session)
     }
     private fun refreshCandidates(session: Session) {_state.update {it.copy(candidates=session.episodes.schedulerCandidates().map {candidate->
         RuntimeCandidate(candidate.episodeHandle,candidate.materialRevision,candidate.serviceMode.name)})}}

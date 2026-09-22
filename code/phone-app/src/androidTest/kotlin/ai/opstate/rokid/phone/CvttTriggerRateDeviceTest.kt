@@ -39,9 +39,12 @@ class CvttTriggerRateDeviceTest {
         app.storageReady.await()
         val arguments=InstrumentationRegistry.getArguments()
         val cap=arguments.getString("frames")?.toIntOrNull() ?: 400
+        val dumpScores=arguments.getString("dump_scores")=="true"
 
         data class Fired(val record: String,val frames: Int,val spanHours: Double,val coldStarts: Int,val visualHits: Int)
+        data class Judged(val record: String,val at: Long,val score: Float,val reason: String?,val ms: Long)
         val reports=mutableListOf<Fired>()
+        val judged=mutableListOf<Judged>()
         var remaining=cap
         val only=arguments.getString("session")
         val records=withContext(Dispatchers.IO) {app.database.dao().sessions()
@@ -55,7 +58,13 @@ class CvttTriggerRateDeviceTest {
             CvttFrontEnd(context).use {frontEnd->
                 val first=frames.first().record.occurredAtEpochMs
                 for(frame in frames) {
+                    val started=android.os.SystemClock.elapsedRealtime()
                     val decision=frontEnd.observe(frame.jpeg,frame.record.occurredAtEpochMs-first)
+                    // The raw score, not just the decision: the score is a property of the frozen graphs
+                    // and does not change with a threshold, so one pass over the material is enough to
+                    // price every candidate threshold afterwards.
+                    if(dumpScores) judged+=Judged(session.sessionId,frame.record.occurredAtEpochMs-first,decision.score,
+                        decision.reason,android.os.SystemClock.elapsedRealtime()-started)
                     when(decision.reason) {
                         "CVTT_COLD_START"->cold++
                         else->if(decision.fired) hits++
@@ -95,6 +104,20 @@ class CvttTriggerRateDeviceTest {
         }
         val out=File(requireNotNull(context.getExternalFilesDir(null)),"cvtt_trigger_rate.json")
         out.writeText(Json {prettyPrint=true}.encodeToString(JsonObject.serializer(),report))
+        if(dumpScores) {
+            val lines=judged.joinToString("\n") {row->buildJsonObject {
+                put("record",JsonPrimitive(row.record))
+                put("t_ms",JsonPrimitive(row.at))
+                put("score",JsonPrimitive(row.score))
+                put("reason",row.reason?.let(::JsonPrimitive) ?: JsonNull)
+                put("judge_ms",JsonPrimitive(row.ms))
+            }.toString()}
+            File(requireNotNull(context.getExternalFilesDir(null)),"cvtt_frontend_scores.jsonl").writeText(lines)
+            val mean=judged.map {it.ms}.average()
+            val sorted=judged.map {it.ms}.sorted()
+            println("CVTT_FRONTEND_COST per_frame_mean=${"%.0f".format(mean)}ms median=${sorted[sorted.size/2]}ms " +
+                "p90=${sorted[(sorted.size*9/10).coerceAtMost(sorted.size-1)]}ms frames=${judged.size}")
+        }
         // The measurement itself, on stdout, so a run leaves its number in the transcript too.
         println("CVTT_TRIGGER_RATE $report")
     }

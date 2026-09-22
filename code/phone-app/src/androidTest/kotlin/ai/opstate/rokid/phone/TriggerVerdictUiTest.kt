@@ -30,11 +30,11 @@ class TriggerVerdictUiTest {
 
     private fun triggered(id: String,at: Long)=photo(id,at,
         "trigger_types" to JsonArray(listOf(JsonPrimitive("CVTT_THETA_ON"))),
-        "front_end" to JsonPrimitive("cvtt_frontend_v1"),"front_end_score" to JsonPrimitive(1.98))
+        "front_end" to JsonPrimitive("cvtt_frontend_v1_calibrated"),"front_end_score" to JsonPrimitive(1.98))
 
     private fun passedOver(id: String,at: Long)=photo(id,at,
         "trigger_types" to JsonArray(emptyList()),
-        "front_end" to JsonPrimitive("cvtt_frontend_v1"),"front_end_score" to JsonPrimitive(0.71))
+        "front_end" to JsonPrimitive("cvtt_frontend_v1_calibrated"),"front_end_score" to JsonPrimitive(0.71))
 
     @Test fun aTriggeredFrameAnUntriggeredOneAndAHistoryFrameEachSayWhatTheyAre() {
         val photos=listOf(

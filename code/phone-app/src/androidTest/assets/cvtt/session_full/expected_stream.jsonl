@@ -6,7 +6,7 @@
 {"index": 5, "score_per_seed": [2.05388, 3.372824, 1.053045], "score_ensemble": 2.159916, "fired": true}
 {"index": 6, "score_per_seed": [3.588687, 2.671482, 0.165351], "score_ensemble": 2.14184, "fired": false}
 {"index": 7, "score_per_seed": [3.499954, 1.831843, -0.214323], "score_ensemble": 1.705824, "fired": false}
-{"index": 8, "score_per_seed": [0.950243, 1.472206, 0.879179], "score_ensemble": 1.100543, "fired": false}
+{"index": 8, "score_per_seed": [0.950243, 1.472206, 0.879179], "score_ensemble": 1.100543, "fired": true}
 {"index": 9, "score_per_seed": [-0.264325, 1.252197, 1.25935], "score_ensemble": 0.749074, "fired": false}
 {"index": 10, "score_per_seed": [-0.374994, 0.696289, 1.004395], "score_ensemble": 0.441897, "fired": false}
 {"index": 11, "score_per_seed": [-0.512341, 0.49515, 0.553897], "score_ensemble": 0.178902, "fired": false}
