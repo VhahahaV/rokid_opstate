@@ -30,6 +30,8 @@ private const val ACTIVE_TICK_MS=250L
 
 /** Periodic refresh of an unchanged buffer status; every real change is sent immediately. */
 private const val STATUS_REFRESH_MS=5_000L
+/** Covers two delayed phone heartbeats before treating the peer as absent. */
+private const val HEARTBEAT_LOST_AFTER_MS=25_000L
 
 /** Card commands: the ones that need a page that is actually showing. */
 private val CARD_TYPES=setOf("SHOW_CONTEXT_CARD","SHOW_SERVICE_CARD","SHOW_SESSION_STATUS","REPLAY_SERVICE_CARD")
@@ -159,7 +161,12 @@ class GlassesStudyService : Service() {
         }
     }
     override fun onStartCommand(intent: Intent?,flags: Int,startId: Int): Int {
-        enableCameraType()
+        if(intent?.getBooleanExtra(EXTRA_FROM_BOOT,false)==true && !cameraTypeActive) {
+            // A boot job runs before a third-party app has the while-in-use camera permission. Keep
+            // the CXR responder alive as a connected-device FGS; the foreground page upgrades it and
+            // warms the camera before READY can become true.
+            startForeground(5201,buildNotification(),ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
+        } else enableCameraType()
         return START_NOT_STICKY
     }
     override fun onBind(intent: Intent?)=null
@@ -437,7 +444,7 @@ class GlassesStudyService : Service() {
         serviceCard?.takeIf { now>=it.expiresElapsedMs }?.let { dismiss(it.id,"TIMEOUT") }
         contextCard?.takeIf { now>=it.expiresElapsedMs }?.let { contextCard=null; updateCard() }
         statusCard?.takeIf { now>=it.expiresElapsedMs }?.let { statusCard=null; updateCard() }
-        if(!heartbeatLost && lastHeartbeatElapsed>0 && now-lastHeartbeatElapsed>10_000) {
+        if(!heartbeatLost && lastHeartbeatElapsed>0 && now-lastHeartbeatElapsed>HEARTBEAT_LOST_AFTER_MS) {
             heartbeatLost=true; clearCards(); transferJob?.cancel();offeredId=null
             if(autonomousMode!="COLLECTION") {captureJob?.cancel();captureId=null}
             graph.mutableUi.update {it.copy(phoneConnected=false)}

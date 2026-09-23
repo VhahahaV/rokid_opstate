@@ -30,9 +30,7 @@ python tools/serve_frozen_harness.py \
 
 命令只打印令牌文件路径。默认监听 127.0.0.1；非回环监听必须提供 `--tls-cert` 和 `--tls-key`。进程使用独立数据库与日志，不修改原实验仓库或 `.env`。
 
-当前 5080 部署目录为 `/home/caizhuoqiang/Code/rokid_opstate_deploy`，使用独立 `.venv`；Qwen 监听回环 8767，GPT 监听回环 8768，状态与服务日志位于 `state/qwen` 和 `state/gpt-sol`。源文件与本机 SHA-256 对照通过，见 `reports/latest/v5-frozen-provider-validation.json`。跨 Mac/Linux 同步应使用 `rsync --exclude='__pycache__' --exclude='._*'`，避免将 AppleDouble 元数据当成 schema。
-
-目前手机工程验证路径为 ADB reverse → Mac SSH forwarding → 5080 模型服务。它证明远程模型 HTTP 调用可用，尚不满足脱离电脑的 HTTPS 运行要求；后者仍需要完成手机可达的部署入口与现场无线验收。
+历史服务验证使用回环端口 8767/8768；源码哈希对照见 `reports/latest/v5-frozen-provider-validation.json`。当时的远程 HTTP 试通不构成脱离电脑的无线闭环证据。当前手机业务使用 API Key 直连，不启动此服务。
 
 ## 已完成的验证
 

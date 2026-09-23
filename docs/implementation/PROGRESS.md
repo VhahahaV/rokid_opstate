@@ -1,6 +1,6 @@
 # V5 历史实现与验证跟踪
 
-> 此页为按时间累计的历史记录，表内早期“待完成”不代表当前实现。当前状态以 [V5_ACCEPTANCE_STATUS.md](V5_ACCEPTANCE_STATUS.md)、[MIGRATION_5080.md](MIGRATION_5080.md) 和根目录 STATUS 为准。2026-09-04 用户取消长测，转为整理与迁移；已筛选证据在 `reports/evidence/2026-09-04/`。
+> 此页为按时间累计的历史记录，表内早期“待完成”不代表当前实现。当前状态以 [V5_ACCEPTANCE_STATUS.md](V5_ACCEPTANCE_STATUS.md) 和根目录 STATUS 为准。2026-09-04 用户取消长测；已筛选证据在 `reports/evidence/2026-09-04/`。
 
 目标依据：根目录 `OPSTATE_Rokid_Full_Development_Spec_V5.md`（2026-09-03）。本表跟踪完整目标；组件测试通过不会替代端到端验收。此前 `VALIDATION.md` 只记录基础修复阶段。
 
@@ -71,7 +71,7 @@
 
 ## 模型配置与 Track A 最新要求
 
-- 用户提供 5080 服务器上的 Track A/Track B 实验仓库和凭证位置，要求先完成已有部署任务，再对标 Track A。已只读核对代码/配置并记录于 `TRACK_A_REFERENCE.md`；尚未运行 Track A 实验。
+- 用户提供 Track A/Track B 实验仓库和凭证位置，要求先完成已有部署任务，再对标 Track A。已只读核对代码/配置并记录于 `TRACK_A_REFERENCE.md`；尚未运行 Track A 实验。
 - 手机设置页新增模型配置卡：保存服务地址、预期模型 ID 和加密 Harness 令牌，读取实际冻结契约。现场/回放准备均核对绑定模型；运行期间不可修改配置。供应商 API Key 仍由服务器管理。
 - 模型绑定错误的 HTTP 合约测试通过，详情索引与 Room 迁移真机测试通过；原完整回放审计链仍有效，首/末试次加载分别为 23 / 96 ms（`v5-phone-trial-index.json`）。
 - 已新增 Qwen / GPT 两个服务器冻结 profile，配置卡可读取实际发送的参数与快照哈希；参数由服务器配置文件冻结，手机不直接改写供应商参数。Track A 快照选择、预算与输入语义对齐仍留在后续阶段。
@@ -133,15 +133,15 @@
 
 - 当前旧服务器代码仅实现 mock，旧提示词仍对应 V1；新增独立 `frozen_harness.py`、`model_provider.py`、`harness_store.py` 与 V2 模型提示词，保留原 mock 契约和回放。每个进程只运行一个冻结模型配置，不构建多 provider 管理平台。
 - 真实服务支持用户实验中使用的 Chat Completions / Responses 结构，严格检查冻结字段、因果证据、服务输出、图像哈希与输入预算；先保存供应商原始响应再解析，错误保持技术失败。SQLite 保存请求结果和用量，重复请求复用原结果，服务重启不自动重新执行未完成模型请求。
-- 服务已部署到 5080 的独立目录 `/home/caizhuoqiang/Code/rokid_opstate_deploy`，使用独立虚拟环境，从原 `.env` 读取所选模型 Key，不改动原实验仓库或复制供应商 Key 到手机。
+- 旧冻结服务曾使用独立虚拟环境，从原 `.env` 读取所选模型 Key，不改动原实验仓库或复制供应商 Key 到手机；当前手机业务已改为 API Key 直连。
 - `v5-frozen-all-python-tests.txt`：27 项通过。`v5-frozen-model-phone-device.txt`：Qwen 原生手机 HTTP 客户端检查通过；`v5-frozen-model-gpt-result.json`：GPT Responses 服务端检查通过。输入均为生成的棋盘格与合成历史，未使用 Track A 数据或进行效果对标。
 - `v5-frozen-provider-validation.json`：部署源码 SHA 与本地相同。Qwen 供应商执行 1 次，562 输入 / 37 输出 token，总耗时 734.561 ms；GPT 执行 1 次，806 输入 / 32 输出 token，总耗时 4,033.44 ms。两者返回 NO_SERVICE，重复请求复用原 decision_id；不据此计算 P95 或模型效果。
 - 手机配置卡现显示实际模型 profile、wire API、发送参数及配置哈希；真实鉴权读取和显示已通过 `v5-frozen-model-ui-device.txt`，截图 `v5-frozen-model-config-ui.png`。测试结束后恢复了原服务地址、模型绑定与令牌。
-- 当前手机连 5080 仍使用 ADB reverse + SSH 转发，仅是开发验证通道；正式 HTTPS 入口、拔电脑运行及真实无线闭环尚未通过。部署与复现说明见 `FROZEN_MODEL_SERVICE.md`。
+- 当时的手机与旧冻结服务连接仅是开发验证通道，不构成脱离电脑的无线闭环证据。旧服务验证边界见 `FROZEN_MODEL_SERVICE.md`。
 
 ## 用户调整后的准备工作
 
-- 已停止服务器 HTTPS 路线：尚未启用的两个 systemd unit 已移除，手机中尚未部署的实验 CA 配置与对应测试已移除；没有改动手机系统证书或官方配对。此前 5080 模型服务保留为已有工程参考。
+- 已停止旧服务器 HTTPS 路线：尚未启用的两个 systemd unit 已移除，手机中尚未部署的实验 CA 配置与对应测试已移除；没有改动手机系统证书或官方配对。
 - 保留了一处通用网络修复：经默认网关访问内网主机时可以选用有效 Internet 网络，设置检查与现场请求使用一致的网络选择。该修复也适用于后续 API Key 直连。
 - 5090 的两份指定项目已通过 scp 下载所需源码，107 个文件的 SHA-256 全部匹配。远端没有安装工具、执行构建或修改文件。清单见 `v5-vln-reference-copy.json`，分析见 `NATIVE_RFCOMM_REFERENCE.md`。
 - 原生 RFCOMM 控制通道已得到源码确认；P2P 仍有旧 CxrController 调用和协商适配，需分开处理。后续不再把新版 CxrApi 的 Client Secret / `.lc` 条件直接套用于自家原生控制通道。

@@ -16,6 +16,7 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-feature android:name="android.hardware.camera.any" android:required="true" />
     <application android:name="ai.opstate.rokid.glasses.GlassesApplication" android:label="OPSTATE Glasses"
+        android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher"
         android:theme="@style/GlassesTheme" android:allowBackup="false">
         <activity android:name="ai.opstate.rokid.glasses.MainActivity" android:exported="true"
             android:launchMode="singleTop" android:screenOrientation="portrait"

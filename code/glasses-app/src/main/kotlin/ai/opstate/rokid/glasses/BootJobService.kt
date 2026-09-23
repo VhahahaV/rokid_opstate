@@ -7,6 +7,7 @@ import android.app.job.JobService
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.provider.Settings
 
 /**
  * Restarts the study service after a reboot.
@@ -14,8 +15,9 @@ import android.content.Intent
  * This ROM refuses to deliver `BOOT_COMPLETED` to third-party packages
  * ("Background execution Third-Party APP not allowed"), so [BootReceiver] never runs. A persisted
  * job is different: the system keeps it in its own store and reschedules it after boot, without
- * needing to hand the app a broadcast. The service owns the CXR subscription, so once it is up the
- * phone's handshake has a responder and the glasses stops looking disconnected.
+ * needing to hand the app a broadcast. It may run several minutes after boot; it is a service
+ * recovery check, not a guarantee that the app page opens immediately. The service owns the CXR
+ * subscription, so once it is up the phone's handshake has a responder.
  */
 class BootJobService : JobService() {
     override fun onStartJob(params: JobParameters?): Boolean {
@@ -23,6 +25,12 @@ class BootJobService : JobService() {
             startForegroundService(Intent(this,GlassesStudyService::class.java)
                 .putExtra(GlassesStudyService.EXTRA_FROM_BOOT,true))
         }.onFailure { android.util.Log.w("OPSTATE","BOOT_JOB_START_${it.javaClass.simpleName}") }
+        val count=Settings.Global.getInt(contentResolver,Settings.Global.BOOT_COUNT,-1)
+        if(count>=0 && getSharedPreferences("boot-page",MODE_PRIVATE).getInt("launched",-1)!=count) {
+            runCatching {startActivity(Intent(this,MainActivity::class.java).addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))}
+                .onFailure {android.util.Log.w("OPSTATE","BOOT_PAGE_START_${it.javaClass.simpleName}")}
+        }
         jobFinished(params,false)
         return false
     }
@@ -35,6 +43,10 @@ class BootJobService : JobService() {
     override fun onStopJob(params: JobParameters?): Boolean = false
 
     companion object {
+        fun markLaunched(context: Context) {
+            val count=Settings.Global.getInt(context.contentResolver,Settings.Global.BOOT_COUNT,-1)
+            if(count>=0) context.getSharedPreferences("boot-page",Context.MODE_PRIVATE).edit().putInt("launched",count).apply()
+        }
         private const val JOB_ID=5201
         /** The platform minimum; the job is a cheap liveness check, not a recurring workload. */
         private const val JOB_PERIOD_MS=15*60*1000L
@@ -43,8 +55,7 @@ class BootJobService : JobService() {
             val scheduler=context.getSystemService(Context.JOB_SCHEDULER_SERVICE) as? JobScheduler ?: return
             if(scheduler.getPendingJob(JOB_ID)!=null) return
             // Periodic, not one-shot: only a job still registered with the system is restored after a
-            // reboot, and a one-shot would have already run and been discarded. When the last run is
-            // older than the period the system fires it promptly on boot, which restarts the service.
+            // reboot. The platform controls its next window, so this cannot promise immediate startup.
             val job=JobInfo.Builder(JOB_ID,ComponentName(context,BootJobService::class.java))
                 .setPersisted(true)
                 .setPeriodic(JOB_PERIOD_MS)

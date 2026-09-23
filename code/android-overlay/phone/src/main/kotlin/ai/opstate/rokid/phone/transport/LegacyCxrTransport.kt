@@ -20,13 +20,20 @@ import java.util.concurrent.TimeUnit
 /** Reconnect pacing. Leaving and re-entering Bluetooth range takes minutes, so retries continue. */
 private const val INITIAL_RECONNECT_BACKOFF_MS=2_000L
 private const val MAX_RECONNECT_BACKOFF_MS=60_000L
+private const val HEARTBEAT_INTERVAL_MS=3_000L
+private const val HEARTBEAT_TIMEOUT_MS=5_000L
+private const val HEARTBEAT_FAILURE_LIMIT=3
 
 /** Maps real CXR messages and P2P bodies into domain events. SDK enqueue is never a display ACK. */
 class LegacyCxrTransport(
     private val link: CxrLinkPort,private val scope: CoroutineScope,
     private val elapsedNow: ()->Long = SystemClock::elapsedRealtime,
     private val rpcTimeoutMs: Long=8_000,private val readinessPollMs: Long=250,
+    private val heartbeatIntervalMs: Long=HEARTBEAT_INTERVAL_MS,
+    private val heartbeatTimeoutMs: Long=HEARTBEAT_TIMEOUT_MS,
+    private val heartbeatFailureLimit: Int=HEARTBEAT_FAILURE_LIMIT,
 ) : StudyTransport {
+    init { require(heartbeatIntervalMs>0 && heartbeatTimeoutMs>0 && heartbeatFailureLimit>0) }
     private val _state=MutableStateFlow<RokidConnectionState>(RokidConnectionState.Disconnected)
     override val state: StateFlow<RokidConnectionState> = _state.asStateFlow()
     private val _events=MutableSharedFlow<RokidEvent>(extraBufferCapacity=256)
@@ -193,11 +200,13 @@ class LegacyCxrTransport(
             link.startP2p().onFailure {error("P2P_INITIALIZATION_FAILED",true)}
             heartbeatJob?.cancel()
             heartbeatJob=scope.launch {
+                var failures=0
                 while(isActive) {
-                    delay(3000)
+                    delay(heartbeatIntervalMs)
                     try {
-                        val pong=rpc(controlMessage("PING"),5000)
+                        val pong=rpc(controlMessage("PING"),heartbeatTimeoutMs)
                         check(pong.type=="PONG") {"INVALID_HEARTBEAT_REPLY"}
+                        failures=0
                         if(pong.payload["clock_ready"]==JsonPrimitive(false) || (sessionExpected &&
                             (pong.payload["active_session_id"]?.jsonPrimitive?.contentOrNull!=sessionId || pong.payload["active_session_epoch"]?.jsonPrimitive?.longOrNull!=sessionEpoch))) {
                             _ready.value=false
@@ -208,8 +217,17 @@ class LegacyCxrTransport(
                         }
                         _ready.value=link.state.value.bluetoothConnected && pong.payload["camera_ready"]?.jsonPrimitive?.boolean!=false
                     }
-                    catch(cancelled: CancellationException) { if(cancelled !is TimeoutCancellationException) throw cancelled; error("HEARTBEAT_TIMEOUT",true); link.disconnect(); reconnect(); return@launch }
-                    catch(error: Exception) { error("HEARTBEAT_FAILED",true); link.disconnect(); reconnect(); return@launch }
+                    catch(cancelled: CancellationException) {
+                        if(cancelled !is TimeoutCancellationException) throw cancelled
+                        failures++
+                        if(failures<heartbeatFailureLimit && link.state.value.bluetoothConnected) continue
+                        error("HEARTBEAT_TIMEOUT",true); link.disconnect(); reconnect(); return@launch
+                    }
+                    catch(error: Exception) {
+                        failures++
+                        if(failures<heartbeatFailureLimit && link.state.value.bluetoothConnected) continue
+                        error("HEARTBEAT_FAILED",true); link.disconnect(); reconnect(); return@launch
+                    }
                 }
             }
         } catch(cancelled: CancellationException) {

@@ -2,7 +2,7 @@
 
 用户指定服务器 `~/Scripts/5090_syj.sh`：`ssh -p 59925 sunyujie@202.120.38.209`。本轮只执行查找、读取、哈希及 scp 下载，没有安装工具、运行项目或修改服务器文件。
 
-当前业务已使用用户授权的官方 CXR SDK；下文原生 RFCOMM 为源码参考，不是当前实现。5080 副本位于 `~/.local/share/opstate-dev/reference/5090-syj/`。
+当前业务已使用用户授权的官方 CXR SDK；下文原生 RFCOMM 为源码参考，不是当前实现。
 
 ## 本地副本
 

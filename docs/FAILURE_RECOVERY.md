@@ -78,9 +78,8 @@ app stores it alongside the socket MAC address.
 ```text
 stored identity present  → connect directly, no wearer action
 stored identity missing  → initBluetooth, which needs the glasses in its
-                           scannable state (BLE service 00009100-…), reachable
-                           only by folding the temples and triple-clicking the
-                           function key
+                           scannable state (BLE service 00009100-…). Entering
+                           that state rotates the CXR socket identity.
 ```
 
 ### Rule: never discard a stored identity on a failed attempt
@@ -89,10 +88,9 @@ A socket failure is far more often transient (out of range) than a rotated UUID.
 Discarding the identity converts a recoverable drop into a permanent failure that
 only the physical pairing gesture can clear.
 
-`CxrPhoneLink.connect` therefore keeps the saved identity and merely alternates
-between the saved fast path and a fresh `initBluetooth` on successive attempts, so
-a momentary drop recovers on its own while a genuinely rotated UUID is still
-re-learned. `rememberIdentity` clears the alternation once a fresh identity is saved.
+`CxrPhoneLink.connect` therefore keeps the saved identity on failed attempts. A
+rotated UUID needs an explicit re-identification or the local ADB repair below;
+normal reconnect retries do not silently reset the pairing.
 
 ### 2026-09-17 incident
 
@@ -148,18 +146,17 @@ Two ways back, and they need different things:
 | Anyone, at the glasses | fold the temples, triple-click the function key, then 重新识别眼镜 in the console | the physical gesture |
 | Anyone, at the computer | `make cxr-repair PHONE_SERIAL=… GLASSES_SERIAL=…` | both devices on adb |
 
-The script reads the current value from the glasses' log - the CXR service prints it at every boot:
+The script reads the current value from the glasses' log. The CXR service prints it at boot and whenever pairing replaces the listening record:
 
 ```text
 cxr-service: load CXRConnectionInfo: <uuid>, <base64 key>
-cxr-service: rfcomm server socket listening <uuid>        # the same value, and it does not change on connect
+cxr-service: rfcomm server socket listening <uuid>        # a later pairing may print a different value
 ```
 
-`logcat -d -s cxr-service` matters here: filtering by *text* instead matches adbd's echo of the very
-command being run, and `tail -1` then returns that line instead of the boot line. If the buffer has
-already rolled over the boot, the script reboots the glasses (`--no-reboot` opts out) and waits for the
-line to reappear. It then replaces only `socket_uuid` in the app's own `shared_prefs/cxr-connection.xml`
-- keeping the paired name and address - and restarts the app, which reconnects by itself.
+`logcat -d -s cxr-service` matters here: the script takes the **last** boot-load or RFCOMM-listening
+UUID, because a re-pair during the same boot makes the boot-load value stale. If the buffer has
+rolled over both, the script reboots the glasses (`--no-reboot` opts out). It replaces only
+`socket_uuid` in the app's own preferences and restarts the phone app.
 
 ## 9. Restarting the glasses service after a reboot
 

@@ -2,7 +2,6 @@
 
 用户指定：先完成当前工程部署与真机验收，再开始 Track A 实验对标。当前只读检查参考代码和公开配置，未修改服务器、运行付费推理或启动 Track A 实验。
 
-- 连接入口：本机 `~/Scripts/5080_sjtu.sh`，内容为 `ssh caizhuoqiang@10.180.165.151`；已验证可用。
 - 仓库：`/home/caizhuoqiang/Code/pro_simualtor/opstate-history-harness`。
 - 读取时上级 Git HEAD：`84fae4a4c72636dd39863200a0c87b9259b62f92`。再次核对发现 Track A 所在目录整体未被上级仓库跟踪；此 HEAD 不能代表 Track A 源码快照，应以逐文件哈希冻结。
 - 密钥文件：`/home/caizhuoqiang/Code/pro_simualtor/.env`。目前只核对环境变量名；不在本仓库、手机或日志中复制密钥值。模型供应商凭证与手机访问 Harness 的令牌是两类凭证。

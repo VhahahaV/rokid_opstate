@@ -1,26 +1,20 @@
 # 开发与运行
 
-开发主机为 5080；完整路径与交接见 [MIGRATION_5080.md](implementation/MIGRATION_5080.md)。纯手机业务使用 API Key 直连供应商，不需要启动 Python 服务。
+在本地仓库开发，通过本地 ADB 连接手机和眼镜。纯手机业务使用 API Key 直连供应商，不需要启动 Python 服务。
 
 ## 环境
 
-- JDK 17–23；5080 使用独立 Temurin JDK 21，不改变系统 Java 8。
+- JDK 17–23；`tools/gradle.sh` 会选用本机可用版本。
 - Gradle Wrapper 8.11.1、Kotlin 2.1.21、AGP 8.7.2。
-- Android SDK Platform 35、Build Tools 34.0.0、Linux platform-tools。
-- Python 3.9+；5080 的 `.venv` 使用 Python 3.12，依赖来自 `requirements.txt`。
+- Android SDK Platform 35、Build Tools 34.0.0、platform-tools。
+- Python 3.9+；依赖来自 `requirements.txt`。
 - Rokid `client-m:1.2.2` 与 `cxr-service-bridge:1.0` 由 Gradle 获取并缓存。
 
 新的 Linux x86_64 工作站执行 `bash tools/setup_linux.sh`。脚本在用户目录安装环境，验证 JDK/SDK 下载校验和，通过 sdkmanager 接受 SDK 许可，创建机器本地 `.local/environment.sh` 和 `local.properties`。重复执行可复用已安装工具。依赖下载时间不属于测试时长。
 
 macOS（arm64/x86_64）执行 `bash tools/setup_macos.sh`。它先复用机器上已有的 JDK 17–23（Homebrew openjdk 或 `/usr/libexec/java_home`）与 Android SDK（Platform 35、Build Tools 34.0.0），都找不到时才下载 Temurin 21 和官方命令行工具；因此已配置的机器重复执行不产生下载。两个脚本写入相同变量名和同名机器本地文件，所以 `make quick-check`、`make apks`、`make device-apks` 等命令在两端一致，仓库内没有平台分支。
 
-5080 已完成环境安装，无须再次执行安装脚本：
-
-```bash
-source .local/environment.sh
-make apks
-make quick-check
-```
+本机首次配置后执行 `make apks` 和 `make quick-check`。
 
 `tools/gradle.sh` 自动读取该机器的 `.local/environment.sh`；没有此文件时按 `OPSTATE_JAVA_HOME`、`JAVA_HOME` 和常见 JDK 路径选择 Java。macOS 上它会优先选中 Homebrew 的 `openjdk`。Android SDK 路径由机器本地 `local.properties` 指定，两端写法相同。
 
@@ -38,7 +32,7 @@ make quick-check
 
 APK 输出为 `code/phone-app/build/outputs/apk/debug/phone-app-debug.apk` 与 `code/glasses-app/build/outputs/apk/debug/glasses-app-debug.apk`。R6 公共历史已经包含在 debug assets 内；release 默认不打包研究测试数据。
 
-当前设备已测 APK 保留在 `dist/device-tested-2026-09-04/`。迁移主机通过 `OPSTATE_DEBUG_KEYSTORE` 复用现有调试签名，以便 `adb install -r` 覆盖安装并保留设备上的会话与加密配置。签名文件放在源码之外；不要卸载应用后重装来绕过签名问题。
+历史设备已测 APK 保留在 `dist/device-tested-2026-09-04/`。本机通过 `OPSTATE_DEBUG_KEYSTORE` 复用现有调试签名，以便 `adb install -r` 覆盖安装并保留设备上的会话与加密配置。签名文件放在源码之外；不要卸载应用后重装来绕过签名问题。
 
 ## 数据与可选 mock
 
@@ -54,9 +48,16 @@ Python 服务仅用于兼容契约和 mock 实验。`make serve` 启动后可访
 
 ## 真机检查
 
-USB 设备目前连接 Mac；5080 不自动拥有它们的 ADB 连接。可在 Mac 下载服务器构建的 APK 后用本机 ADB 安装。详细命令见迁移文档。
+USB 设备连接本机后，用 `adb devices -l` 核对序列号，再分别执行：
+
+```bash
+adb -s PHONE_SERIAL install -r code/phone-app/build/outputs/apk/debug/phone-app-debug.apk
+adb -s GLASSES_SERIAL install -r code/glasses-app/build/outputs/apk/debug/glasses-app-debug.apk
+```
 
 库 instrumentation 使用 `ai.opstate.rokid.phone.librarytest` / `ai.opstate.rokid.glasses.librarytest`，与正式研究宿主分开。`tools/device_smoke.py` 按显式序列号安装测试包。宿主硬件测试和 `tools/device_checks/` 中的可选脚本需要单独选择；默认短回归不会运行 30 分钟测试或产生模型用量。
+
+本地设备的 OPSTATE 专用模式可用 `tools/configure_phone_opstate_exclusive.sh apply PHONE_SERIAL` 与 `tools/configure_glasses_opstate_mode.sh apply GLASSES_SERIAL` 配置；两脚本都支持 `restore`。眼镜脚本保留 Rokid 系统桌面，以免冷启动时 CXR 握手失败。连接身份更新用 `make cxr-repair PHONE_SERIAL=… GLASSES_SERIAL=…`。原因与验证边界见 [蓝牙稳定性与设备配置](implementation/BLUETOOTH_STABILITY.md)。
 
 ## 文件边界
 

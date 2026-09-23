@@ -33,6 +33,8 @@ class MainActivity : Activity() {
     // Collection status is passive: it still renders, but must not hold the panel lit for a whole session.
     private var passiveStatus=false
     private var choosingPhone=false
+    private var confirmRePair=false
+    private var pendingRepair=false
     /**
      * What a tap on empty space means. Only rows and controls hit-test themselves, so a touch between
      * two of them falls through to the page; naming the owner per screen keeps the pairing screen from
@@ -59,6 +61,7 @@ class MainActivity : Activity() {
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        BootJobService.markLaunched(this)
         hud=HudView(this)
         setContentView(hud)
         // Reaching here from a card means the panel was asleep; these let the page turn it back on
@@ -85,7 +88,7 @@ class MainActivity : Activity() {
     @Deprecated("Framework callback")
     override fun onRequestPermissionsResult(requestCode: Int,permissions: Array<out String>,grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode,permissions,grantResults)
-        if(requestCode==11 && grantResults.isNotEmpty() && grantResults.all {it==PackageManager.PERMISSION_GRANTED}) openPhones()
+        if(requestCode==11 && grantResults.isNotEmpty() && grantResults.all {it==PackageManager.PERMISSION_GRANTED}) openPhones(pendingRepair)
         if(requestCode==10 && checkSelfPermission(Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED) {
             startForegroundService(Intent(this,GlassesStudyService::class.java))
         }
@@ -249,7 +252,7 @@ class MainActivity : Activity() {
         graph.displayVisible.value=visible
     }
     private fun backAction() {
-        if(choosingPhone) {choosingPhone=false;stopDiscovery();lastState=null;render(graph.ui.value)}
+        if(choosingPhone) {choosingPhone=false;confirmRePair=false;stopDiscovery();lastState=null;render(graph.ui.value)}
         else {
             visible?.close();visible=null
             displayed?.let {graph.dismissEvents.trySend(it.id)}
@@ -289,8 +292,8 @@ class MainActivity : Activity() {
         if(keyCode==KeyEvent.KEYCODE_BACK) {if(!event.isCanceled) backAction();return true}
         if(choosingPhone) {
             when(keyCode) {
-                KeyEvent.KEYCODE_DPAD_DOWN,KeyEvent.KEYCODE_DPAD_RIGHT->{phoneIndex=(phoneIndex+1).coerceAtMost(phones.size+1);renderPhones();return true}
-                KeyEvent.KEYCODE_DPAD_UP,KeyEvent.KEYCODE_DPAD_LEFT->{phoneIndex=(phoneIndex-1).coerceAtLeast(0);renderPhones();return true}
+                KeyEvent.KEYCODE_DPAD_DOWN,KeyEvent.KEYCODE_DPAD_RIGHT->{phoneIndex=(phoneIndex+1).coerceAtMost(phones.size+1);confirmRePair=false;renderPhones();return true}
+                KeyEvent.KEYCODE_DPAD_UP,KeyEvent.KEYCODE_DPAD_LEFT->{phoneIndex=(phoneIndex-1).coerceAtLeast(0);confirmRePair=false;renderPhones();return true}
             }
         }
         if(keyCode==KeyEvent.KEYCODE_DPAD_CENTER || keyCode==KeyEvent.KEYCODE_ENTER) {primaryAction();return true}
@@ -311,23 +314,24 @@ class MainActivity : Activity() {
         if(!graph.ui.value.phoneConnected) {openPhones();return}
         demoCollapsed=true;lastState=null;render(graph.ui.value)
     }
-    private fun openPhones() {
+    private fun openPhones(repair: Boolean=false) {
         val permissions=if(Build.VERSION.SDK_INT>=31) arrayOf(Manifest.permission.BLUETOOTH_SCAN,Manifest.permission.BLUETOOTH_CONNECT)
             else arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
         val missing=permissions.filter {checkSelfPermission(it)!=PackageManager.PERMISSION_GRANTED}
-        if(missing.isNotEmpty()) {requestPermissions(missing.toTypedArray(),11);return}
-        choosingPhone=true;phoneIndex=0;phones.clear()
+        if(missing.isNotEmpty()) {pendingRepair=repair;requestPermissions(missing.toTypedArray(),11);return}
+        choosingPhone=true;phoneIndex=0;confirmRePair=false;phones.clear()
         if(!receiverRegistered) {
             val filter=IntentFilter(BluetoothDevice.ACTION_FOUND).apply {addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED);addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)}
             if(Build.VERSION.SDK_INT>=33) registerReceiver(discovery,filter,RECEIVER_EXPORTED) else registerReceiver(discovery,filter)
             receiverRegistered=true
         }
         if(bluetooth?.isEnabled!=true) {pairingHint="请先在系统设置中打开蓝牙";renderPhones();return}
-        // Advertise the CXR BLE service so the phone's UUID-filtered scan can actually see us.
-        graph.link.startBTPairing()
+        // The system's startBTPairing removes the existing bond and rotates its RFCOMM UUID. Merely
+        // viewing the disconnected page must never invoke it: a single tap used to break reconnection.
+        if(repair) graph.link.startBTPairing()
         bluetooth.bondedDevices.forEach {phones[it.address]=it}
-        pairingHint="在手机打开蓝牙设置；滑动选择，轻触配对"
-        if(!bluetooth.startDiscovery()) pairingHint="搜索未启动，可选择已配对手机或打开系统配对"
+        pairingHint=if(repair) "重新配对中，请在手机确认配对请求" else "先在手机 OPSTATE 重连；只有重配才会重置连接"
+        if(repair && !bluetooth.startDiscovery()) pairingHint="搜索未启动，请打开系统蓝牙配对"
         renderPhones()
     }
     private fun renderPhones() {
@@ -341,7 +345,7 @@ class MainActivity : Activity() {
         hud.support(pairingHint,3)
         hud.gap(16f)
         val labels=phones.values.map {"${it.name ?: "未命名设备"} · ${if(it.bondState==BluetoothDevice.BOND_BONDED) "已配对" else "可配对"}"}+
-            listOf("重新搜索附近手机","系统蓝牙与配对")
+            listOf("重新配对（重置连接）","系统蓝牙与配对")
         phoneIndex=phoneIndex.coerceIn(0,labels.lastIndex)
         val first=(phoneIndex-1).coerceAtLeast(0).coerceAtMost((labels.size-3).coerceAtLeast(0))
         labels.drop(first).take(3).forEachIndexed {offset,label->
@@ -359,7 +363,11 @@ class MainActivity : Activity() {
             pairingHint=if(device.bondState==BluetoothDevice.BOND_BONDED) "已配对 ${device.name ?: "手机"}。请在该手机 OPSTATE 点击连接眼镜"
                 else if(device.createBond()) "请在手机确认配对请求" else "无法发起配对，请打开系统配对重试"
             renderPhones()
-        } else if(phoneIndex==phones.size) openPhones()
+        } else if(phoneIndex==phones.size) {
+            if(!confirmRePair) {
+                confirmRePair=true;pairingHint="再次单击确认重配：旧手机连接身份会失效";renderPhones()
+            } else openPhones(repair=true)
+        }
         else {
             stopDiscovery()
             try {startActivity(Intent().setClassName("com.rokid.os.sprite.launcher","com.rokid.os.sprite.launcher.setting.bluetooth.SettingBluetoothActivity"))}

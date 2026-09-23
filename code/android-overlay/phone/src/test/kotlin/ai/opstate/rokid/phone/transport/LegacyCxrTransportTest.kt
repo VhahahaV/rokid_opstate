@@ -17,13 +17,15 @@ class LegacyCxrTransportTest {
         val sent=mutableListOf<StudyMessage>()
         val cache=CommandReplyCache()
         var hellos=0;var coldHellos=0;var suppressHello=false;var dropSessionReply=false;var starts=0
+        var pings=0;var dropPongsForMessages=0;var disconnects=0
+        private val pingIds=mutableSetOf<String>()
         var displayReady=true
         var appVersion="fixture";var apkHash="a".repeat(64);var clockSynced=false;var p2pStarts=0
         override suspend fun scan(durationMs: Long)=listOf(CxrDevice("AC:86:D1:56:FC:AF","test glasses"))
         override fun savedDevice()=CxrDevice("AC:86:D1:56:FC:AF","test glasses")
         override suspend fun connect(device: CxrDevice) {state.value=CxrLinkState(phase="CONNECTED",bluetoothConnected=true)}
         override fun startP2p(): Result<Unit> {p2pStarts++;return Result.success(Unit)}
-        override fun disconnect() {state.value=CxrLinkState()}
+        override fun disconnect() {disconnects++;state.value=CxrLinkState()}
         suspend fun emit(message: StudyMessage) {messages.emit(StudyWire.encode(message))}
         suspend fun reply(request: StudyMessage,type: String,payload: JsonObject) {
             emit(request.copy(type=type,payload=JsonObject(payload+("reply_to" to JsonPrimitive(request.message_id)))))
@@ -37,6 +39,10 @@ class LegacyCxrTransportTest {
                         "camera_ready" to (hellos>coldHellos),"display_ready" to (displayReady && hellos>coldHellos),"firmware" to "fixture","app_version" to appVersion,"apk_sha256" to apkHash))
                 }
                 "CLOCK_SYNC" -> {clockSynced=true;reply(request,"CLOCK_READY",StudyWire.payload("clock_ready" to true))}
+                "PING" -> {
+                    if(pingIds.add(request.message_id)) pings++
+                    if(pings>dropPongsForMessages) reply(request,"PONG",StudyWire.payload("clock_ready" to true,"camera_ready" to true))
+                }
                 "SESSION_START" -> {
                     val response=cache.replay(request) ?: request.copy(type="SESSION_READY",payload=StudyWire.payload("camera_ready" to true,"reply_to" to request.message_id)).also {
                         starts++;cache.remember(request,it)
@@ -54,6 +60,31 @@ class LegacyCxrTransportTest {
         val transport=LegacyCxrTransport(link,scope,::elapsed,rpcTimeoutMs=100,readinessPollMs=1)
         try {transport.connect(device()).getOrThrow();transport.startSession("screen-off",1).getOrThrow();assertTrue(transport.ready.value)}
         finally {scope.cancel()}
+    }
+    @Test fun aSingleLostHeartbeatDoesNotTearDownHealthyBluetooth()=runBlocking<Unit> {
+        val scope=CoroutineScope(SupervisorJob()+Dispatchers.Unconfined)
+        val link=FakeLink().apply {dropPongsForMessages=1}
+        val transport=LegacyCxrTransport(link,scope,::elapsed,rpcTimeoutMs=100,readinessPollMs=1,
+            heartbeatIntervalMs=20,heartbeatTimeoutMs=40,heartbeatFailureLimit=3)
+        try {
+            transport.connect(device()).getOrThrow()
+            withTimeout(1000) {while(link.pings<2) delay(5)}
+            assertTrue(transport.ready.value)
+            assertEquals(0,link.disconnects)
+        } finally {scope.cancel()}
+    }
+    @Test fun consecutiveLostHeartbeatsEventuallyReconnect()=runBlocking<Unit> {
+        val scope=CoroutineScope(SupervisorJob()+Dispatchers.Unconfined)
+        val link=FakeLink().apply {dropPongsForMessages=Int.MAX_VALUE}
+        val transport=LegacyCxrTransport(link,scope,::elapsed,rpcTimeoutMs=100,readinessPollMs=1,
+            heartbeatIntervalMs=20,heartbeatTimeoutMs=40,heartbeatFailureLimit=3)
+        try {
+            transport.connect(device()).getOrThrow()
+            // The fake link increments disconnects before the transport publishes ready=false.
+            withTimeout(1000) {while(link.disconnects==0 || transport.ready.value) delay(5)}
+            assertEquals(3,link.pings)
+            assertFalse(transport.ready.value)
+        } finally {scope.cancel()}
     }
     @Test fun warmupDoesNotRequireDisconnectingAnAlreadyConnectedSdk()=runBlocking<Unit> {
         val scope=CoroutineScope(SupervisorJob()+Dispatchers.Unconfined);val link=FakeLink().apply {coldHellos=2}
