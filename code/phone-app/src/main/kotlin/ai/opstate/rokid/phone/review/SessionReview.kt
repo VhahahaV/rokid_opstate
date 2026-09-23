@@ -44,16 +44,16 @@ data class CapturedPhoto(val id: String,val file: File,val capturedAt: Long,val 
     val servedDecisionId: String?=null,val servedTitle: String?=null,val servedBody: String?=null,
     val servedMode: String?=null,val servedAnchor: String?=null) {
     val historical get()=metadata.string("source")?.endsWith("HISTORY")==true
-    /** What the local front end decided about this frame, as the glasses wrote it beside the picture. */
+    /** Automatic CVTT verdict or the operator's explicit trigger, persisted beside the picture. */
     val triggers get()=metadata["trigger_types"]?.jsonArray?.mapNotNull {it.jsonPrimitive.contentOrNull}.orEmpty()
-    /** True when the glasses' visual front end fired on this frame. False means it looked and declined. */
+    /** A visual front-end hit or an explicit manual trigger. */
     val triggered get()=triggers.isNotEmpty()
     val frontEnd get()=metadata.string("front_end")
     val frontEndScore get()=metadata.string("front_end_score")?.toDoubleOrNull()
     /** Whether the frame carries a verdict at all: a history frame or one from before the front end. */
-    val frontEndDecided get()=frontEnd!=null && frontEnd!="DISABLED"
+    val frontEndDecided get()=frontEnd!=null && frontEnd!="DISABLED" && frontEnd!="BYPASSED_MANUAL"
     /** The verdict as one phrase, for a badge or a detail row. */
-    val triggerLabel get()=when {triggered->"触发";frontEndDecided->"未触发";else->"无判定"}
+    val triggerLabel get()=when {"MANUAL" in triggers->"手动触发";triggered->"触发";frontEndDecided->"未触发";else->"无判定"}
 }
 data class TrialReview(val summary: TrialSummary,val request: JsonObject?,val raw: JsonObject?,val decision: JsonObject?,val image: File?,val providerRaw: JsonObject?=null)
 class SessionReviewRepository(private val journal: StudyJournal) {

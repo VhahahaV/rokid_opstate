@@ -5,6 +5,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.ui.res.painterResource
 import ai.opstate.rokid.phone.app.R
 import ai.opstate.rokid.phone.replay.ReplayState
+import ai.opstate.rokid.phone.runtime.ProactivityEffort
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -26,6 +27,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontFamily
+import kotlin.math.roundToInt
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -93,7 +95,8 @@ data class OperatorActions(
     val configureCapture: (Long,Boolean,Int)->Unit={_,_,_->},
     val addContext: (SyntheticContextInput,()->Unit)->Unit,
     /** Run the chain on evidence the operator picks instead of on a fresh capture. */
-    val pickPhoto: ()->Unit={},val pickContext: ()->Unit={},val forceService: (Boolean)->Unit={},
+    val pickPhoto: ()->Unit={},val pickContext: ()->Unit={},
+    val proactivityEffort: (ProactivityEffort)->Unit={},
     val openLogs: (String)->Unit,
     val loadHistory: (String,Int,()->Unit)->Unit,val clearHistory: ()->Unit,
     val syncPhotos: ()->Unit={},
@@ -402,6 +405,10 @@ data class OperatorActions(
     }
     Text(if(runtime.scenario=="Meeting location change") "会议地点与时间变更" else runtime.scenario.orEmpty(),style=MaterialTheme.typography.titleLarge)
     Text(if(runtime.mode==SessionMode.COLLECTION) "采集模式 · 照片只保存在手机" else "服务模式",style=MaterialTheme.typography.bodySmall,color=Quiet)
+    if(runtime.mode==SessionMode.SERVICE) ProactivityEffortControl(runtime.sessionId,runtime.proactivityEffort,
+        enabled=!state.busy && runtime.proactivityAvailable,onSelected=actions.proactivityEffort)
+    if(runtime.mode==SessionMode.SERVICE && !runtime.proactivityAvailable)
+        Text("当前模型连接不支持三档主动性设置。",style=MaterialTheme.typography.bodySmall,color=Quiet)
     Text(when(runtime.startupDisplay) {"VISIBLE"->"眼镜已显示启动提示";"WAITING"->"眼镜已接收会话，等待显示确认…";else->"尚未收到启动提示的显示确认，请检查眼镜画面"},style=MaterialTheme.typography.bodySmall,color=if(runtime.startupDisplay=="VISIBLE") Success else Quiet)
     if(runtime.replayEnabled) key(runtime.sessionId) {
         ScenarioPlaybackPanel(runtime.elapsedMs,runtime.durationMs,runtime.markers,enabled=!state.busy && state.peerReady,onSeek=actions.seek)
@@ -443,6 +450,31 @@ data class OperatorActions(
     }
     runtime.error?.let {Text(sessionError(it),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)}
 } }
+@Composable internal fun ProactivityEffortControl(sessionId: String?,effort: ProactivityEffort,
+    enabled: Boolean,onSelected: (ProactivityEffort)->Unit) {
+    var position by remember(sessionId) {mutableFloatStateOf(effort.level.toFloat())}
+    LaunchedEffect(effort,enabled) {if(enabled) position=effort.level.toFloat()}
+    val selected=ProactivityEffort.fromLevel(position.roundToInt())
+    Text("主动服务 effort · ${when(selected) {
+        ProactivityEffort.RESTRAINED->"克制服务"
+        ProactivityEffort.INCLINED->"倾向服务"
+        ProactivityEffort.GUARANTEED->"必定服务"
+    }}",style=MaterialTheme.typography.titleSmall)
+    Slider(value=position,onValueChange={position=it},
+        onValueChangeFinished={onSelected(ProactivityEffort.fromLevel(position.roundToInt()))},
+        valueRange=0f..2f,steps=1,enabled=enabled,
+        modifier=Modifier.fillMaxWidth().testTag("proactivity_effort_slider"))
+    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) {
+        Text("克制服务",style=MaterialTheme.typography.labelSmall,color=Quiet)
+        Text("倾向服务",style=MaterialTheme.typography.labelSmall,color=Quiet)
+        Text("必定服务",style=MaterialTheme.typography.labelSmall,color=Quiet)
+    }
+    Text(when(selected) {
+        ProactivityEffort.RESTRAINED->"只在当前证据和时机都充分时打断。"
+        ProactivityEffort.INCLINED->"有根据的轻量帮助也倾向出卡。"
+        ProactivityEffort.GUARANTEED->"每次进入评估都要求模型写卡；模型或证据校验失败时不显示模板卡。"
+    }+"自动触发和手动触发使用同一档位。",style=MaterialTheme.typography.bodySmall,color=Quiet)
+}
 @Composable private fun DevicePanel(state: OperatorViewState,onOpen: (()->Unit)?=null) { Panel {
     Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
         Text("设备链路",style=MaterialTheme.typography.titleMedium)

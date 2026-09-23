@@ -3,6 +3,8 @@
 日期：2026-09-20。范围：手机端在线服务 runtime（CVTT 前端 → 模型 → 投递/回执）。
 证据：`dist/OPSTATE_Streaming_Harness_Code_Evidence_20260920.zip`（解包在 `.local/harness_evidence_20260920/`）。
 
+> 版本提醒：本文记录 9 月 20 日单轮决策与“两条非相机记录”闸门的历史改动。9 月 23 日开始的手机原生 HR 路径已改为按贡献判断证据充分性，并接入 STEP/按需检索/FINAL、自身服务历史与无图数字 packet；当前实现和验证边界见 [HR 迁移短测](../../reports/latest/hr_mobile_migration_progress_20260923.md)。旧闸门仍供显式旧路径对照使用，本文旧版真机证据不能当作新 HR 的联合验收。
+
 ## 1. 现象
 
 在线服务会话里，只要 CVTT 前端触发一帧，模型几乎必然给出一张卡；把「强制服务」关掉也不会变，

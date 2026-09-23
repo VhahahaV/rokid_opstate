@@ -1,0 +1,55 @@
+{
+  "type": "object",
+  "properties": {
+    "decision": {
+      "type": "string",
+      "enum": [
+        "SILENT",
+        "SERVICE"
+      ]
+    },
+    "service": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "AWARENESS",
+            "DECISION",
+            "PREPARATION",
+            "EXECUTION"
+          ]
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "title": {
+          "type": "string",
+          "description": "Chinese glasses title; 1 to 40 Unicode characters."
+        },
+        "body": {
+          "type": "string",
+          "description": "Chinese glasses body; 1 to 140 Unicode characters."
+        }
+      },
+      "required": [
+        "mode",
+        "title",
+        "body",
+        "evidence_ids"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "decision",
+    "service"
+  ],
+  "additionalProperties": false
+}

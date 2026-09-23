@@ -1,6 +1,7 @@
 package ai.opstate.rokid.phone.runtime
 
 import ai.opstate.core.inference.*
+import ai.opstate.core.context.CausalContextStore
 import ai.opstate.core.model.*
 import ai.opstate.protocol.StudyWire
 import kotlinx.coroutines.*
@@ -12,6 +13,34 @@ import java.util.Base64
 import java.util.concurrent.TimeUnit
 
 class DirectModelClientTest {
+    @Test fun flashIsTheDefaultAndSavedMaxConfigurationsMigrateWithoutLosingOtherParameters() {
+        assertEquals("qwen3.8-flash",DirectModelConfig.qwen().modelId)
+        assertFalse(DirectModelConfig.choices().any {it.second.modelId=="qwen3.8-max"})
+        val saved=DirectModelConfig(modelId="qwen3.8-max",maxOutputTokens=768)
+        assertEquals(saved.copy(modelId="qwen3.8-flash"),saved.migrateLegacyMax())
+    }
+    @Test fun flashStringObservationNoteIsDiscardedOnlyForSilence() {
+        val silent=StudyWire.payload("observation_note" to "画面描述未附来源",
+            "candidate" to StudyWire.payload("candidate_kind" to JsonNull,"why_now" to JsonNull,
+                "available_evidence" to JsonArray(emptyList()),"missing_facts" to JsonArray(emptyList()),
+                "next_action" to "SILENT"),"memory_ops" to JsonArray(emptyList()),
+            "route" to "SILENT","query" to JsonNull,"service" to JsonNull)
+        assertEquals("",HrWireParser.step(silent).note.text)
+        val service=silent.toMutableMap().apply {this["route"]=JsonPrimitive("SERVICE")}
+        assertTrue(runCatching {HrWireParser.step(JsonObject(service))}.isFailure)
+    }
+    @Test fun silentFlashReplyCanDropAnOrphanedSourceOnAnEmptyNote() {
+        val silent=StudyWire.payload("observation_note" to StudyWire.payload(
+            "text" to "","source_ids" to JsonArray(listOf(JsonPrimitive("current")))),
+            "candidate" to StudyWire.payload("candidate_kind" to JsonNull,"why_now" to JsonNull,
+                "available_evidence" to JsonArray(emptyList()),"missing_facts" to JsonArray(emptyList()),
+                "next_action" to "SILENT"),"memory_ops" to JsonArray(emptyList()),
+            "route" to "SILENT","query" to JsonNull,"service" to JsonNull)
+        assertEquals(emptyList<String>(),HrWireParser.step(silent).note.sourceIds)
+        val service=silent.toMutableMap().apply {this["route"]=JsonPrimitive("SERVICE")}
+        assertEquals("HR_EMPTY_NOTE_HAS_SOURCES",
+            runCatching {HrWireParser.step(JsonObject(service))}.exceptionOrNull()?.message)
+    }
     private val key="fixture-model-secret-321"
     private val image="explicit-unit-image-fixture".toByteArray()
     private fun client(server: MockWebServer,wire: String="responses")=DirectModelClient(
@@ -138,5 +167,113 @@ class DirectModelClientTest {
         assertNotEquals(chat.credentialScope(),chat.copy(endpoint="https://another.example/v1").credentialScope())
         assertTrue(runCatching {chat.copy(endpoint="http://api.example/v1").validate()}.isFailure)
         assertTrue(runCatching {chat.copy(endpoint="https://api.example/v1?api_key=secret").validate()}.isFailure)
+    }
+
+    @Test fun nativeHrStepUsesPhoneImageAndReturnsEvidenceBoundService()=runBlocking {
+        MockWebServer().use {server->
+            val step=StudyWire.payload(
+                "observation_note" to StudyWire.payload("source_ids" to JsonArray(emptyList()),"text" to ""),
+                "candidate" to StudyWire.payload("candidate_kind" to "OPEN_ITEM","why_now" to "当前可帮助核对",
+                    "available_evidence" to JsonArray(listOf(JsonPrimitive("obs-fixture"))),
+                    "missing_facts" to JsonArray(emptyList()),"next_action" to "SERVICE"),
+                "memory_ops" to JsonArray(emptyList()),"route" to "SERVICE","query" to JsonNull,
+                "service" to StudyWire.payload("mode" to "AWARENESS","title" to "现场核对",
+                    "body" to "当前画面可核对。","evidence_ids" to JsonArray(listOf(JsonPrimitive("obs-fixture")))))
+            val raw=StudyWire.payload("model" to "fixture-model","status" to "completed",
+                "output" to JsonArray(listOf(StudyWire.payload("type" to "message","content" to JsonArray(listOf(
+                    StudyWire.payload("type" to "output_text","text" to step.toString())))))))
+            server.enqueue(MockResponse().setHeader("Content-Type","application/json").setBody(raw.toString()))
+            val hr=DirectModelClient(
+                DirectModelConfig("fixture-model",server.url("/v1").toString(),"responses",512,reasoningEffort="high"),
+                {key},"legacy prompt",StudyWire.payload("type" to "object"),"a".repeat(64),"b".repeat(64),"c".repeat(64),
+                allowTestLoopback=true,hrStepPrompt="HR STEP fixture",hrFinalPrompt="HR FINAL fixture",
+                hrStepSchema=StudyWire.payload("type" to "object"),hrFinalSchema=StudyWire.payload("type" to "object"))
+            val request=request(hr)
+            val history=CausalContextStore().apply {append(ObservationRecord("obs-fixture",ObservationKind.IMAGE,
+                request.anchorTimeEpochMs,request.anchorTimeEpochMs,"test",assetId="asset-fixture"))}
+            val audit=mutableListOf<RawHarnessResponse>()
+            val outcome=hr.evaluateHrTurn(request,image,emptyMap(),history,emptyList()) {audit+=it}
+            assertEquals(DecisionLabel.SERVICE,outcome.response.decision)
+            assertEquals(setOf("obs-fixture"),outcome.response.evidenceObservationIds)
+            assertEquals(listOf("PROVIDER_RESPONSES","HR_STEP_NORMALIZED"),audit.map {it.format})
+            assertEquals(1,server.requestCount)
+            val sent=StudyWire.json.parseToJsonElement(server.takeRequest(1,TimeUnit.SECONDS)!!.body.readUtf8()).jsonObject
+            assertEquals(JsonPrimitive("HR STEP fixture"),sent["instructions"])
+            assertEquals(JsonPrimitive(2048),sent["max_output_tokens"])
+            assertTrue(sent.toString().contains("obs-fixture"))
+        }
+    }
+
+    @Test fun eachProactivityEffortHasItsOwnFrozenPromptIdentity()=runBlocking {
+        MockWebServer().use {server->
+            fun configured(effort: ProactivityEffort)=DirectModelClient(
+                DirectModelConfig("fixture-model",server.url("/v1").toString(),"responses",512),
+                {key},"legacy prompt",StudyWire.payload("type" to "object"),
+                "a".repeat(64),"b".repeat(64),"c".repeat(64),allowTestLoopback=true,
+                hrStepPrompt="shared HR STEP",hrFinalPrompt="shared HR FINAL",
+                hrStepSchema=StudyWire.payload("type" to "object"),
+                hrFinalSchema=StudyWire.payload("type" to "object"),
+                hrGuaranteedPrompt="GUARANTEED_MODEL_ONLY_PROMPT",
+                hrGuaranteedSchema=StudyWire.payload("type" to "object"),proactivityEffort=effort)
+            val frozen=ProactivityEffort.entries.map {configured(it).contract()}
+            assertEquals(3,frozen.map {it.promptHash}.distinct().size)
+            assertEquals(3,frozen.map {it.preprocessHash}.distinct().size)
+            assertEquals(listOf("RESTRAINED","INCLINED","GUARANTEED"),frozen.map {
+                requireNotNull(it.modelConfig).getValue("proactivity_effort").jsonPrimitive.content})
+        }
+    }
+
+    @Test fun guaranteedSilenceUsesASecondModelResponseInsteadOfAProgramCard()=runBlocking {
+        for(effort in listOf(ProactivityEffort.INCLINED,ProactivityEffort.GUARANTEED)) MockWebServer().use {server->
+            val output=StudyWire.payload("observation_note" to StudyWire.payload(
+                "source_ids" to JsonArray(emptyList()),"text" to ""),
+                "candidate" to StudyWire.payload("candidate_kind" to JsonNull,"why_now" to JsonNull,
+                    "available_evidence" to JsonArray(emptyList()),"missing_facts" to JsonArray(emptyList()),
+                    "next_action" to "SILENT"),"memory_ops" to JsonArray(emptyList()),
+                "route" to "SILENT","query" to JsonNull,"service" to JsonNull)
+            server.enqueue(MockResponse().setHeader("Content-Type","application/json").setBody(
+                StudyWire.payload("model" to "fixture-model","status" to "completed",
+                    "output" to JsonArray(listOf(StudyWire.payload("type" to "message",
+                        "content" to JsonArray(listOf(StudyWire.payload("type" to "output_text",
+                            "text" to output.toString()))))))).toString()))
+            if(effort==ProactivityEffort.GUARANTEED) {
+                val generated=StudyWire.payload("decision" to "SERVICE","service" to StudyWire.payload(
+                    "mode" to "AWARENESS","title" to "模型写的现场卡",
+                    "body" to "画面显示一台测试设备，请核对眼前状态。",
+                    "evidence_ids" to JsonArray(listOf(JsonPrimitive("obs-fixture")))))
+                server.enqueue(MockResponse().setHeader("Content-Type","application/json").setBody(
+                    StudyWire.payload("model" to "fixture-model","status" to "completed",
+                        "output" to JsonArray(listOf(StudyWire.payload("type" to "message",
+                            "content" to JsonArray(listOf(StudyWire.payload("type" to "output_text",
+                                "text" to generated.toString()))))))).toString()))
+            }
+            val client=DirectModelClient(DirectModelConfig("fixture-model",server.url("/v1").toString(),"responses",512),
+                {key},"legacy",StudyWire.payload("type" to "object"),"a".repeat(64),"b".repeat(64),"c".repeat(64),
+                allowTestLoopback=true,hrStepPrompt="shared HR STEP",hrFinalPrompt="shared HR FINAL",
+                hrStepSchema=StudyWire.payload("type" to "object"),hrFinalSchema=StudyWire.payload("type" to "object"),
+                hrGuaranteedPrompt="GUARANTEED_MODEL_ONLY_PROMPT",
+                hrGuaranteedSchema=StudyWire.payload("type" to "object"),
+                proactivityEffort=effort)
+            val request=request(client)
+            val history=CausalContextStore().apply {append(ObservationRecord("obs-fixture",ObservationKind.IMAGE,
+                request.anchorTimeEpochMs,request.anchorTimeEpochMs,"test",assetId="asset-fixture"))}
+            val result=client.evaluateHrTurn(request,image,emptyMap(),history,emptyList()) {}
+            val body=StudyWire.json.parseToJsonElement(server.takeRequest(1,TimeUnit.SECONDS)!!.body.readUtf8()).jsonObject
+            val instructions=body.getValue("instructions").jsonPrimitive.content
+            assertTrue(instructions.contains(if(effort==ProactivityEffort.INCLINED) "倾向服务" else "必定服务"))
+            if(effort==ProactivityEffort.GUARANTEED) {
+                assertEquals(DecisionLabel.SERVICE,result.response.decision)
+                assertTrue(result.forcedModelPass)
+                assertEquals(setOf("obs-fixture"),result.response.evidenceObservationIds)
+                assertEquals("模型写的现场卡",result.response.title)
+                assertEquals(2,server.requestCount)
+                val forced=StudyWire.json.parseToJsonElement(server.takeRequest(1,TimeUnit.SECONDS)!!.body.readUtf8()).jsonObject
+                assertEquals(JsonPrimitive("GUARANTEED_MODEL_ONLY_PROMPT"),forced["instructions"])
+            } else {
+                assertEquals(DecisionLabel.NO_SERVICE,result.response.decision)
+                assertFalse(result.forcedModelPass)
+                assertEquals(1,server.requestCount)
+            }
+        }
     }
 }

@@ -2,10 +2,12 @@ package ai.opstate.rokid.phone.replay
 
 import ai.opstate.core.model.ObservationKind
 import ai.opstate.core.model.ObservationRecord
+import ai.opstate.core.hr.HrAgentOutput
 import ai.opstate.protocol.StudyWire
 import ai.opstate.rokid.phone.data.StudyJournal
 import ai.opstate.rokid.phone.data.contextObservationKey
 import kotlinx.serialization.json.*
+import java.io.File
 
 data class LocalCollectionSummary(
     val sessionId: String,
@@ -18,7 +20,7 @@ data class LocalCollectionSummary(
 
 data class CollectedHistoryImage(
     val record: ObservationRecord,
-    val jpeg: ByteArray,
+    val jpegFile: File,
     val sha256: String,
     val width: Int,
     val height: Int,
@@ -27,7 +29,8 @@ data class CollectedHistoryImage(
     val metadata: JsonObject=JsonObject(emptyMap()),
 )
 
-data class LocalCollectionSeed(val summary: LocalCollectionSummary,val images: List<CollectedHistoryImage>,val contexts: List<ObservationRecord> = emptyList())
+data class LocalCollectionSeed(val summary: LocalCollectionSummary,val images: List<CollectedHistoryImage>,
+    val contexts: List<ObservationRecord> = emptyList(),val priorServices: List<HrAgentOutput> = emptyList())
 
 /** Reads immutable, completed collection sessions and freezes a bounded visual prefix for a service session. */
 class LocalCollectionRepository(private val journal: StudyJournal) {
@@ -52,15 +55,15 @@ class LocalCollectionRepository(private val journal: StudyJournal) {
         val images=rows.mapIndexed {index,row->
             val path=row.getValue("local_relative_path").jsonPrimitive.content
             val sha=row.getValue("sha256").jsonPrimitive.content
-            val bytes=journal.localImage(sessionId,path).readBytes()
-            check(StudyWire.sha256(bytes)==sha) {"COLLECTION_IMAGE_HASH_MISMATCH"}
+            val jpegFile=journal.localImage(sessionId,path)
+            check(jpegFile.isFile && StudyJournal.hashFile(jpegFile)==sha) {"COLLECTION_IMAGE_HASH_MISMATCH"}
             val sourceObservationId=row.getValue("observation_id").jsonPrimitive.content
             val occurred=row.getValue("occurred_at_epoch_ms").jsonPrimitive.long
             val available=row.getValue("available_at_epoch_ms").jsonPrimitive.long
             val asset="history-${sha.take(16)}"
             val record=ObservationRecord("collection-$sourceToken-${index.toString().padStart(3,'0')}",ObservationKind.IMAGE,
                 occurred,available,"Collected historical image ${index+1} of ${rows.size} from session $sessionId.",assetId=asset)
-            CollectedHistoryImage(record,bytes,sha,row.getValue("width").jsonPrimitive.int,row.getValue("height").jsonPrimitive.int,
+            CollectedHistoryImage(record,jpegFile,sha,row.getValue("width").jsonPrimitive.int,row.getValue("height").jsonPrimitive.int,
                 row.getValue("rotation_degrees").jsonPrimitive.int,sourceObservationId,row)
         }
         // `content` is the observation's text field; notes written before it was supplied carry the
@@ -72,7 +75,27 @@ class LocalCollectionRepository(private val journal: StudyJournal) {
                 row["occurred_at_epoch_ms"]?.jsonPrimitive?.longOrNull ?: 0L,
                 row["available_at_epoch_ms"]?.jsonPrimitive?.longOrNull ?: 0L,text)
         }
-        return LocalCollectionSeed(summary,images,contexts)
+        return LocalCollectionSeed(summary,images,contexts,priorServices(sessionId))
+    }
+
+    /** Previous model outputs stay separate from public observations and cannot become factual citations. */
+    private fun priorServices(sessionId: String): List<HrAgentOutput> {
+        val delivered=journal.dao.stream(sessionId,"receipts").filter {it.eventType=="RECEIPT_COMMITTED"}
+            .mapNotNull {row->StudyWire.json.parseToJsonElement(row.canonicalJson).jsonObject["decision_id"]
+                ?.jsonPrimitive?.contentOrNull}.toSet()
+        return journal.dao.stream(sessionId,"decisions").asSequence()
+            .filter {it.eventType=="MODEL_DECISION"}
+            .map {StudyWire.json.parseToJsonElement(it.canonicalJson).jsonObject}
+            .filter {it["decision"]==JsonPrimitive("SERVICE")}
+            .mapNotNull {row->
+                val title=row["title"]?.jsonPrimitive?.contentOrNull?.takeIf {it.isNotBlank()} ?: return@mapNotNull null
+                val body=row["body"]?.jsonPrimitive?.contentOrNull?.takeIf {it.isNotBlank()} ?: return@mapNotNull null
+                val decisionId=row["decision_id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                HrAgentOutput(row["packet_id"]?.jsonPrimitive?.contentOrNull ?: decisionId,
+                    row["produced_at_epoch_ms"]?.jsonPrimitive?.longOrNull ?: return@mapNotNull null,
+                    title,body,row["evidence_observation_ids"]?.jsonArray?.mapNotNull {it.jsonPrimitive.contentOrNull}.orEmpty(),
+                    decisionId in delivered)
+            }.toList()
     }
 
     // A note added by an operator is an observation like any other, so its payload decides what it is

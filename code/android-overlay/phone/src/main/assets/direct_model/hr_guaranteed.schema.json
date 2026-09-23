@@ -1,0 +1,19 @@
+{
+  "type": "object",
+  "properties": {
+    "decision": {"type": "string", "enum": ["SERVICE"]},
+    "service": {
+      "type": "object",
+      "properties": {
+        "mode": {"type": "string", "enum": ["AWARENESS", "DECISION", "PREPARATION", "EXECUTION"]},
+        "title": {"type": "string"},
+        "body": {"type": "string"},
+        "evidence_ids": {"type": "array", "items": {"type": "string"}}
+      },
+      "required": ["mode", "title", "body", "evidence_ids"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["decision", "service"],
+  "additionalProperties": false
+}

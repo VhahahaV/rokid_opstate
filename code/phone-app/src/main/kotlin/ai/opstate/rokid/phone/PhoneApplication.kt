@@ -32,9 +32,14 @@ class PhoneApplication : Application(), StudyRuntimeProvider {
         assets.open(ai.opstate.rokid.phone.replay.PublicReplayDataset.ASSET_ROOT+path).use {it.readBytes()}}}
     val settings by lazy { getSharedPreferences("study-settings",MODE_PRIVATE) }
     internal var validationInferenceFactory: ((SessionSetup)->InferenceClient?)?=null
-    fun modelConfig(): DirectModelConfig=settings.getString("model_api_config",null)?.let {
-        StudyWire.json.decodeFromString(DirectModelConfig.serializer(),it)
-    } ?: DirectModelConfig.qwen()
+    fun modelConfig(): DirectModelConfig {
+        val saved=settings.getString("model_api_config",null)?.let {
+            StudyWire.json.decodeFromString(DirectModelConfig.serializer(),it)
+        } ?: return DirectModelConfig.qwen()
+        val current=saved.migrateLegacyMax()
+        if(current!=saved) settings.edit().putString("model_api_config",StudyWire.json.encodeToString(DirectModelConfig.serializer(),current)).apply()
+        return current
+    }
     override val studyRuntime by lazy {StudyRuntimeEngine(this,appScope,transport,journal,credentials::harnessToken,
         {config->credentials.modelApiKey(config.credentialScope())},
         {setup->if(ai.opstate.rokid.phone.app.BuildConfig.DEBUG) validationInferenceFactory?.invoke(setup) else null})}

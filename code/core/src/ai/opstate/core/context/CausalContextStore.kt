@@ -10,16 +10,22 @@ import ai.opstate.core.model.ObservationRecord
  */
 class CausalContextStore {
     private val eventsById = linkedMapOf<String, ObservationRecord>()
+    private val exposedById = hashMapOf<String, Long>()
+    private val sourceIdsById = hashMapOf<String, Set<String>>()
 
     @Synchronized
-    fun append(event: ObservationRecord) {
+    fun append(event: ObservationRecord, exposedAtEpochMs: Long = event.availableAtEpochMs,
+               sourceIds: Set<String> = setOf(event.observationId)) {
         require(event.availableAtEpochMs >= event.occurredAtEpochMs) {
             "availableAtEpochMs must not precede occurredAtEpochMs"
         }
         require(!eventsById.containsKey(event.observationId)) {
             "duplicate observationId: ${event.observationId}"
         }
+        require(exposedAtEpochMs >= event.availableAtEpochMs) { "exposure precedes availability" }
         eventsById[event.observationId] = event
+        exposedById[event.observationId] = exposedAtEpochMs
+        sourceIdsById[event.observationId] = sourceIds
     }
 
     /**
@@ -31,7 +37,77 @@ class CausalContextStore {
      * Returns the dropped event, or null when it was not held.
      */
     @Synchronized
-    fun remove(observationId: String): ObservationRecord? = eventsById.remove(observationId)
+    fun remove(observationId: String): ObservationRecord? {
+        val removed=eventsById[observationId] ?: return null
+        // A model note may describe a photo that was later deleted, and a future derived row may
+        // cite that note. Remove the whole descendant chain from the *working set*; the journal stays
+        // append-only and retains the original rows plus the source deletion tombstone for audit.
+        val withdrawn=linkedSetOf(observationId)
+        while(true) {
+            val dependent=sourceIdsById.entries.filter { (id,sources)->
+                id !in withdrawn && sources.any {it in withdrawn}
+            }.map {it.key}
+            if(dependent.isEmpty()) break
+            withdrawn.addAll(dependent)
+        }
+        withdrawn.forEach {id->eventsById.remove(id);exposedById.remove(id);sourceIdsById.remove(id)}
+        return removed
+    }
+
+    /** Native phone archive search. Eligibility is checked before ranking, even for precomputed indexes. */
+    @Synchronized
+    fun searchArchive(
+        query: String,
+        snapshotAtEpochMs: Long,
+        runtimeAtEpochMs: Long,
+        excludeIds: Set<String> = emptySet(),
+        limit: Int = 8,
+    ): List<ObservationRecord> {
+        if (query.isBlank() || limit <= 0) return emptyList()
+        val terms = archiveTerms(query)
+        if (terms.isEmpty()) return emptyList()
+        val exact = Regex("[A-Za-z0-9]+(?:[-_:/.][A-Za-z0-9]+)+").findAll(query).map { it.value.lowercase() }.toSet()
+        return eventsById.values.asSequence()
+            .filter { it.observationId !in excludeIds && it.kind != ObservationKind.IMAGE &&
+                it.kind != ObservationKind.MODEL_NOTE &&
+                it.kind != ObservationKind.ACTION_RECEIPT && it.availableAtEpochMs <= snapshotAtEpochMs &&
+                (exposedById[it.observationId] ?: Long.MAX_VALUE) <= runtimeAtEpochMs }
+            .map { record ->
+                val content = record.content.lowercase()
+                val hits = archiveTerms(content).toSet()
+                val shared = terms.count { it in hits }
+                val exactBoost = exact.count { it in content }
+                record to (shared + 5 * exactBoost)
+            }
+            .filter { it.second > 0 }
+            .sortedWith(compareByDescending<Pair<ObservationRecord, Int>> { it.second }
+                .thenByDescending { it.first.availableAtEpochMs }.thenBy { it.first.observationId })
+            .take(limit).map { it.first }.toList()
+    }
+
+    /** Latin words, entity IDs and overlapping Han bigrams; no dependency on workbench FTS5. */
+    private fun archiveTerms(text: String): Set<String> {
+        val lowered = text.lowercase()
+        val latin = Regex("[a-z0-9]+(?:[-_:/.][a-z0-9]+)*").findAll(lowered)
+            .map { it.value }.filter { it.length >= 2 }.toList()
+        val han = Regex("[\\p{IsHan}]+").findAll(lowered).flatMap { match ->
+            val value = match.value
+            if (value.length == 1) sequenceOf(value)
+            else (0 until value.length - 1).asSequence().map { value.substring(it, it + 2) }
+        }.toList()
+        return (latin + han).take(128).toSet()
+    }
+
+    @Synchronized
+    fun causalArchiveSnapshot(snapshotAtEpochMs: Long, runtimeAtEpochMs: Long): List<ObservationRecord> =
+        eventsById.values.filter { it.availableAtEpochMs <= snapshotAtEpochMs &&
+            (exposedById[it.observationId] ?: Long.MAX_VALUE) <= runtimeAtEpochMs }
+
+    @Synchronized
+    fun exposedAt(observationId: String): Long? = exposedById[observationId]
+
+    @Synchronized
+    fun sourceIds(observationId: String): Set<String> = sourceIdsById[observationId].orEmpty()
 
     @Synchronized
     fun causalSnapshot(

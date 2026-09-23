@@ -1,6 +1,18 @@
-# 当前状态 · 2026-09-16
+# 当前状态 · 2026-09-24
 
-**5080 是当前开发主机；手机相册、眼镜磁盘缓存与本地 trigger 版本已安装，已核对两台设备同时拔线 54.21 秒期间持续拍摄和无线同步；尚未达到双机同时离线 60 秒的验收时长。** 仓库：`/home/caizhuoqiang/Code/rokid_opstate`。默认由手机 API Key 直连模型；mock 只用于测试。
+**当前在本地仓库开发，并通过本地 ADB 连接手机与眼镜。** 手机相册、眼镜磁盘缓存与本地 trigger 版本已安装，已核对两台设备同时拔线 54.21 秒期间持续拍摄和无线同步；尚未达到双机同时离线 60 秒的验收时长。默认由手机 API Key 直连模型；mock 只用于测试。
+
+9 月 24 日必定档已取消程序安全卡：过去 Flash 的 HR STEP 沉默后，运行时直接拼接“现场观察／新情境”模板，所以能保证有卡，却不是模型写的。现有可见新证据时，首轮沉默或原卡被事实校验挡下，会在同一因果快照上发起一次专门的模型生成阶段；标题、正文、证据仍由模型给出并校验，拒绝旧模板话术。模型调用或事实校验失败则记录失败，不制造卡片。手机 APK 已覆盖安装；同两张本地真实照片与手动/自动各一轮真实手机＋眼镜 Flash 短测均得到模型生成的不同正文，后两轮模型响应与上屏正文逐字一致、两帧 ACK 和回执通过。质量仍需独立判断，详见 [模型生成必定档验收](reports/latest/model_generated_guaranteed_20260924.md)。
+
+9 月 24 日真实在线 HR 错误已修复并覆盖安装：用户必定档会话的 4 次 Flash 请求均到达模型，却因程序把 `MANUAL`/`CVTT_*` 新照片误认为复用而在 HR 笔记校验阶段失败，未生成决策。现以本包 `new_event_ids` 而非触发类型拼写判断照片新鲜度；Flash 在沉默回答里留下空笔记的图片 ID 时，仅丢弃这项无效归属，服务/检索证据规则仍严格。`make quick-check`、`make apks` 通过，真机分别验收自动 CVTT 与手动触发：两轮均是手机 `qwen3.8-flash` 真调用、真实眼镜拍摄与显示、必定档审计标记的安全卡、两帧 ACK、回执和有效日志链。当前安装 APK 哈希已与本地构建核对，手机无未结束会话。详见 [真实设备验收](reports/latest/hr_live_freshness_acceptance_20260924.md)。
+
+9 月 24 日手动触发修复：在线服务按钮现为「手动触发」。拍照、选照片、选情境绕过自动 CVTT，直接提交 HR 模型判断，最终服务仍按当前 effort；手动照片在记录中标「手动触发」，不会再显示为「未触发」。已有情境走 HR 无图请求，且模型决定前不先显示情境卡。手机默认模型和原保存的 Max 配置均迁移到 `qwen3.8-flash`，同一接口域的 API Key 保留。`make quick-check`、`make apks`、手机组件 5 项、UI 3 项、自动路径 1 项、真实眼镜注入模型两帧 ACK 通过；Flash 用现有本地照片短测 2/2 无技术错误。详见 [本轮修复与证据](reports/latest/manual_trigger_flash_20260924.md)。
+
+9 月 23 日主动服务档位收敛：手机 APK 已用保留的调试签名覆盖安装。「克制服务／倾向服务／必定服务」三档 effort 拖动条位于服务模式的「当前会话」卡片；手动源选择中的「强制服务」开关已移除，自动与手动共用档位。`make quick-check`、`make apks`、完整当前会话卡片与拖动条 UI 2 项、手机组件 3 项及真实眼镜注入模型两帧 ACK 通过；带空闲保护的统一短验收脚本也完整通过。另用 `qwen3.8-max` 真模型＋真实眼镜完成一轮必定档上屏、两帧 ACK、Receipt 联合短测，卡来自程序 fallback。同一组本地真实图片的短测中，必定档在普通画面 2/2 产生可审计的程序安全卡；倾向档在聊天边界片段多给出 1 张卡，价值仍需复核。旧眼镜采集计数 UI 用例因 CXR 断开/等待计数未通过，不能记为成功。未测完整连续服务率及独立 Gold。详见 [三档短验收](reports/latest/proactivity-effort/summary.md)与[实现边界](docs/implementation/PROACTIVITY_EFFORT.md)。
+
+9 月 23 日 HR 手机端迁移进行中：手机直连模型默认进入原生 HR STEP→可选本地检索→FINAL，支持无图数字事件、因果时间过滤、有限历史/自身服务记录和中文小卡合同；生产路径不再使用旧版“两条非相机记录”硬门槛。基于现有两天资料固定 24 张真实原图、56 条待审合成情境做短回放：旧单轮路径在 24 个指定评估点提议 9 张卡；最新已安装中文 HR 完整回放提议 1 张、沉默 23 次，无技术失败，模型调用均为 24 次，单帧时延中位数 2.72→5.04 秒。该素材按历史场景选取，不是独立 Gold、CVTT 全流或真实每小时服务率；唯一新卡的价值是源证据工程核读，尚无盲审。手机组件测试已验证 HR 两帧 ACK 后才提交回执、同卡抑制、纯数字事件无图评估；真实眼镜端新 HR 联合上屏、Dense 手机推理和长期服务频率未验证。详情见 [HR 迁移短测](reports/latest/hr_mobile_migration_progress_20260923.md)。
+
+9 月 23 日蓝牙修复：手机单次心跳超时不再主动断开 CXR，连续 3 次失败才重置；眼镜心跳失联宽限从 10 秒增至 25 秒。眼镜断连页的单击不再直接调用会清除配对并旋转 UUID 的 `startBTPairing`，重配须选择菜单并再次确认；本地 `cxr_repair.sh` 改读最新实际监听 UUID，避免同次开机重配后写回旧值。当前设备已修复手机保存的连接身份，应用 PONG 与一轮约 20 秒的真机服务采集/传图用例通过；未进行新的长时间断链率验收。手机上会竞争同一副眼镜 CXR 连接的 Rokid 伴侣 App 已暂时禁用，眼镜上除 OPSTATE 外的第三方 App 已暂时禁用。眼镜系统 Home 保留 Rokid 桌面：本机固件实测替换 Home 会妨碍 CXR 握手，官方自启属性在本固件重启后未拉起 OPSTATE，不能宣称已实现开机立即自动进入应用。详见 [蓝牙稳定性与设备配置](docs/implementation/BLUETOOTH_STABILITY.md)。
 
 | 范围 | 状态 |
 |---|---|
@@ -8,7 +20,7 @@
 | 依赖 | 独立 JDK 21、Linux Android SDK 35/Build Tools 34、Gradle/Kotlin/Rokid 缓存、Python 3.12 venv 已配置 |
 | Linux 短回归 | `make quick-check` 通过：Python 33、核心 23、协议 13、手机 JVM 29 |
 | Android 构建 | 手机、眼镜 APK 及 instrumentation APK 已成功构建 |
-| 5080 真机短回归 | BVL-AN00 手机 20 项、RG-glasses 眼镜 2 项通过；采集→本机历史→服务的新增设备用例通过 |
+| 真机短回归 | BVL-AN00 手机 20 项、RG-glasses 眼镜 2 项通过；采集→本机历史→服务的新增设备用例通过 |
 | 签名与凭证 | 现有调试签名保留在源码外，两个宿主 APK 签名一致；Rokid 凭证私有迁移，文件权限 600 |
 | 清理 | 清除约 1.5 GB 缓存/重复数据库/解包与导出产物；原始输入和有效证据保留 |
 | 现场业务 | 官方 SDK 握手、真实 Bluetooth/P2P 拍照、眼镜重启恢复、20 轮显示与沉默组件序列已有真机证据；5 秒间隔连续采集 62 秒得到 13/13 张有效原图，60 秒累计定时漂移 105 ms |
@@ -24,7 +36,7 @@
 
 相机占用优化已部署：采集间隔 5 秒/30 秒复用预览，1 分钟/2 分钟逐张释放相机；空闲、暂停、结束也释放。首次取图等待实际 AE/AWB 稳定，替代固定延迟。当前眼镜三轮冷启动实拍为 1.271–1.342 秒，三张均通过现有画质检查；修改前立即取首帧的三张均未通过。1 分钟实测两次连接/关闭相机并同步 2 张，5 秒实测复用相机、暂停释放、最终保存 5 张；两个会话均已结束且缓存为空。短回归、APK 构建和新增真机用例通过。此证据不测量整机电量或续航增益；阈值未做功耗盈亏标定。证据：[启动前](reports/latest/camera_startup_before.json)、[启动后](reports/latest/camera_startup_after.json)、[实拍占用与释放](reports/latest/camera_duty_cycle_real_device.json)、[设备用例](reports/latest/camera_power_device_tests.txt)。
 
-[迁移交接与运行命令](docs/implementation/MIGRATION_5080.md) · [代码导航](docs/CODE_MAP.md) · [批量采集及熄屏证据](reports/latest/buffered_capture_real_device.json) · [眼镜 trigger 真机证据](reports/latest/edge_trigger_real_device.json) · [历史/相册 UI 验证](reports/latest/history_gallery_ui_device_tests.txt) · [业务证据边界](docs/implementation/V5_ACCEPTANCE_STATUS.md)
+[本地开发与运行](docs/DEVELOPMENT.md) · [代码导航](docs/CODE_MAP.md) · [批量采集及熄屏证据](reports/latest/buffered_capture_real_device.json) · [眼镜 trigger 真机证据](reports/latest/edge_trigger_real_device.json) · [历史/相册 UI 验证](reports/latest/history_gallery_ui_device_tests.txt) · [业务证据边界](docs/implementation/V5_ACCEPTANCE_STATUS.md)
 
 9 月 19 日在线服务的拍摄与上传对齐采集模式：**前端算法从眼镜端搬到手机端**：在线服务每拍一张立刻上传到手机，手机对每一帧跑一次 CVTT 判断，命中才调用模型；眼镜只负责拍摄、缓冲与上传，服务模式不设批量（采集模式仍按「每批同步张数」攒批）。眼镜 APK 因此不再包含 111 MB 的 ONNX 图。手机端把「实时观察与情境」与「拍摄与上传」拆成两块（修掉了原先挤成一列竖排的按钮），每张缩略图右上角标出前端判定（触发 / 未触发 / 无判定），大图详情里给出判定、前端版本与触发分数；服务模式唯一的设置项是拍照频率与「自动前端触发」。眼镜端补上了服务会话的前端：过去只在采集模式下发状态页，服务会话 `demoStatus` 为空、`render` 无分支可走，单击触控板只是在两个空页面之间切换；现在两次模式一致地由眼镜自己的状态出页（拍照频率、已拍、待同步、前端开关），采集开在状态页上、服务默认静默、单击即显示。实测触发率：合并采集记录 791 帧命中 24 次（3.03%/帧），22:56 会话 400 帧命中 13 次（3.25%/帧）；按标定 30 秒帧距折算 3.6–3.9 次/小时，与数据集实验的约 6 次/小时同量级。真机验证：`ServiceCaptureParityDeviceTest`（未触发帧保存且不评估、触发帧建包评估、批量下发到眼镜）、`ServiceCapturePanelUiTest`（在线服务面板显示三个计数与「每 N 张自动上传」）、`GlassesHardwareTest.aServiceSessionShowsItsCaptureStateWhenTapped` 与 `aLiveServiceSessionPublishesItsCaptureStateToThePage`（真机会话：静默→单击出页→再点收起）、`AutomaticCaptureDeviceTest#serviceSessionUploadsItsCapturesInBatchesOfTheConfiguredCount`（真机 5 秒×2 张批量上传，证据 `reports/latest/`）。本轮未测真实模型评估路径（真机验证用的是本地脚本模型）与长时间续航。
 

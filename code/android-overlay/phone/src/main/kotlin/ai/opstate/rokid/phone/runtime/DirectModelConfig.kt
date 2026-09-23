@@ -7,8 +7,8 @@ import java.net.URI
 
 @Serializable
 data class DirectModelConfig(
-    // Model ids are the provider's, dots and all: "qwen-3.8-max" is not a model, "qwen3.8-max" is.
-    val modelId: String="qwen3.8-max",
+    // Model ids are the provider's, dots and all.
+    val modelId: String="qwen3.8-flash",
     val endpoint: String="https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
     val wireApi: String="chat_completions",
     val maxOutputTokens: Int=512,
@@ -20,6 +20,7 @@ data class DirectModelConfig(
     val responseLanguage: String="zh-CN",
     val timeoutMs: Long=15000,
     val decisionTtlMs: Long=20000,
+    val retrievalBackend: String="PHONE_LEXICAL_V1",
 ) {
     fun resolvedEndpoint(): String {
         var base=endpoint.trim().trimEnd('/')
@@ -37,6 +38,7 @@ data class DirectModelConfig(
         require(maxOutputTokens in 64..16384 && temperature.isFinite() && temperature in 0.0..2.0 && topP.isFinite() && topP in 0.0..1.0 &&
             timeoutMs in 1000..60000 && decisionTtlMs in 1000..60000) {"MODEL_PARAMETERS_INVALID"}
         require(reasoningEffort==null || reasoningEffort in setOf("none","minimal","low","medium","high","xhigh")) {"MODEL_PARAMETERS_INVALID"}
+        require(retrievalBackend=="PHONE_LEXICAL_V1") {"HR_RETRIEVAL_BACKEND_UNAVAILABLE"}
     }
     fun parameters(): JsonObject=if(wireApi=="responses") buildJsonObject {
         put("max_output_tokens",maxOutputTokens);reasoningEffort?.let {put("reasoning_effort",it)}
@@ -46,13 +48,13 @@ data class DirectModelConfig(
     }
     fun publicSnapshot(): JsonObject=StudyWire.payload("connection_mode" to "DIRECT_API_KEY","model_id" to modelId,
         "endpoint" to resolvedEndpoint(),"wire_api" to wireApi,"parameters" to parameters(),"response_language" to responseLanguage,
-        "timeout_ms" to timeoutMs,"decision_ttl_ms" to decisionTtlMs)
+        "timeout_ms" to timeoutMs,"decision_ttl_ms" to decisionTtlMs,"retrieval_backend" to retrievalBackend)
+    fun migrateLegacyMax(): DirectModelConfig=if(modelId=="qwen3.8-max") copy(modelId="qwen3.8-flash") else this
     companion object {
         /** The models this build offers, all on the same endpoint and parameters. */
         fun qwen()=DirectModelConfig()
         fun qwenFlash()=DirectModelConfig(modelId="qwen3.8-flash")
         fun qwen37Flash()=DirectModelConfig(modelId="qwen3.7-flash-2026-07-15")
-        fun choices()=listOf("Qwen 3.8 Max" to qwen(),"Qwen 3.8 Flash" to qwenFlash(),
-            "Qwen 3.7 Flash" to qwen37Flash())
+        fun choices()=listOf("Qwen 3.8 Flash" to qwenFlash(),"Qwen 3.7 Flash" to qwen37Flash())
     }
 }

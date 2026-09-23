@@ -104,22 +104,15 @@ private fun cadenceLine(runtime: ai.opstate.rokid.phone.runtime.RuntimeViewState
         val ready=runtime.phase=="RUNNING" && !state.busy
         Row(horizontalArrangement=Arrangement.spacedBy(10.dp)) {
             Button({manual=!manual},enabled=!state.busy,modifier=Modifier.weight(1f).heightIn(min=48.dp),
-                shape=RoundedCornerShape(12.dp)) {Text(if(manual) "收起源选择" else "手动服务")}
+                shape=RoundedCornerShape(12.dp)) {Text(if(manual) "收起源选择" else "手动触发")}
             OutlinedButton(addContext,enabled=!state.busy,modifier=Modifier.weight(1f).heightIn(min=48.dp),
                 shape=RoundedCornerShape(12.dp)) {Text("添加合成情境")}
         }
         if(manual) Column(Modifier.fillMaxWidth().background(Canvas,RoundedCornerShape(16.dp))
             .padding(horizontal=16.dp,vertical=18.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
-            Row(verticalAlignment=Alignment.CenterVertically,modifier=Modifier.padding(bottom=6.dp)) {
-                Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(3.dp)) {
-                    Text("强制服务",style=MaterialTheme.typography.titleMedium)
-                    Text("每次调用都要求模型给出服务，走另一份提示词。演示用：跳过记录依据和去重检查。",style=MaterialTheme.typography.bodySmall,color=Quiet)
-                }
-                Switch(runtime.forceService,actions.forceService,enabled=!state.busy)
-            }
-            HorizontalDivider(color=Line,modifier=Modifier.padding(bottom=12.dp))
-            Text("用哪种来源走一遍完整链路",style=MaterialTheme.typography.labelLarge,color=Quiet,
+            Text("选择直接提交模型判断的来源",style=MaterialTheme.typography.labelLarge,color=Quiet,
                 modifier=Modifier.padding(start=4.dp,bottom=4.dp))
+            Text("跳过自动前端检测；是否服务仍遵循当前会话的 effort。",style=MaterialTheme.typography.bodySmall,color=Quiet)
             // Three rows, not three squeezed buttons: what separates these is what they do, and a
             // half-width label cannot say that. Each one keeps its own line of explanation.
             SourceRow("拍照","现在拍一张，从拍摄开始",ready,actions.capture)
@@ -185,7 +178,7 @@ private fun cadenceLine(runtime: ai.opstate.rokid.phone.runtime.RuntimeViewState
                 Row(verticalAlignment=Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("自动前端触发")
-                        Text("关闭后不再自动因视觉变化上传；手动服务仍可立即触发。",style=MaterialTheme.typography.bodySmall,color=Quiet)
+                        Text("关闭后不再自动因视觉变化触发；手动触发仍可直接评估。",style=MaterialTheme.typography.bodySmall,color=Quiet)
                     }
                     Switch(frontEnd,{frontEnd=it})
                 }

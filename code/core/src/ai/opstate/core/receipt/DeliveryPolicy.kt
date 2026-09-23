@@ -19,12 +19,13 @@ object DeliveryPolicy {
     /**
      * How much of the production decision the harness applies after the model has answered.
      *
-     * [FORCED_DEMO] is the operator's explicit "show me a card" switch. It exists to exercise the display
-     * path, so it does not apply the rules that exist to keep cards rare - a demo that silently produces
-     * nothing would be indistinguishable from a broken one. Everything that protects correctness (staleness,
-     * session identity, evidence that is actually visible, the display being free) still applies.
+     * [GUARANTEED] is the user's high-effort setting for automatic and manual evaluations.
+     * [FORCED_DEMO] remains for old explicit test fixtures. Both skip rules that only make cards rare;
+     * staleness, session identity, visible evidence and display availability still apply.
      */
-    enum class Mode(val appliesProductionGates: Boolean) { PRODUCTION(true), FORCED_DEMO(false) }
+    enum class Mode(val appliesProductionGates: Boolean) {
+        PRODUCTION(true), GUARANTEED(false), FORCED_DEMO(false)
+    }
 
     /**
      * The record floor a card has to clear before it is shown.

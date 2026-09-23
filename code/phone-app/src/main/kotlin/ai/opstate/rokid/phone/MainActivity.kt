@@ -23,6 +23,7 @@ import ai.opstate.rokid.phone.runtime.StudyRuntimeService
 import ai.opstate.rokid.phone.runtime.requiresPhotoReload
 import ai.opstate.rokid.phone.runtime.SessionSetup
 import ai.opstate.rokid.phone.runtime.SessionMode
+import ai.opstate.rokid.phone.runtime.ProactivityEffort
 import ai.opstate.rokid.phone.runtime.ChosenPhoto
 import ai.opstate.rokid.phone.runtime.SyntheticContextInput
 import ai.opstate.rokid.phone.runtime.SyntheticContextType
@@ -153,13 +154,17 @@ class MainActivity : ComponentActivity() {
                 start={options->operate {check(!graph.datasetReplay.state.value.running)
                     graph.settings.edit().putInt("sync_batch_size",options.syncBatchSize).apply()
                     viewState.update {it.copy(syncBatchSetting=options.syncBatchSize)}
+                    val effort=runCatching {ProactivityEffort.valueOf(
+                        graph.settings.getString("proactivity_effort",ProactivityEffort.RESTRAINED.name)!!)}
+                        .getOrDefault(ProactivityEffort.RESTRAINED)
                     startForegroundService(Intent(this,StudyRuntimeService::class.java).setAction(StudyRuntimeService.ACTION_START)
                     .putExtra("setup",StudyWire.json.encodeToString(SessionSetup(options.alias,viewState.value.directModel.resolvedEndpoint(),
                         profile=options.profile,expectedModelId=viewState.value.directModel.modelId.takeIf {options.mode==SessionMode.SERVICE},
                         directModel=viewState.value.directModel.takeIf {options.mode==SessionMode.SERVICE},
                         scenarioAsset="",replayEnabled=false,startLiveAfterHistory=true,glassesCapture=true,syncBatchSize=options.syncBatchSize,
                         initialPositionMs=options.scenarioPositionMs,glassesDemoMode=options.demoMode,
-                        shadowInference=options.shadowInference,mode=options.mode,captureIntervalMs=options.captureIntervalMs,forceService=options.forceService,
+                        shadowInference=options.shadowInference,mode=options.mode,captureIntervalMs=options.captureIntervalMs,
+                        proactivityEffort=effort,
                         frontEndEnabled=options.frontEndEnabled,
                         collectionHistorySessionId=options.collectionHistorySessionId,collectionHistoryImageLimit=options.collectionHistoryImageLimit))))}},
                 pause={operate {graph.studyRuntime.pauseSession()}},
@@ -182,8 +187,15 @@ class MainActivity : ComponentActivity() {
                     message("已更新拍照、上传与前端触发设置")
                 }},
                 addContext={input,done->operate {graph.studyRuntime.addSyntheticContext(input).getOrThrow();message("合成情境已加入，后续评估将使用这条信息");done()}},
-                forceService={enabled->operate {graph.studyRuntime.setForceService(enabled).getOrThrow();
-                    message(if(enabled) "已开启强制服务：每次调用都会给出服务" else "已关闭强制服务")}},
+                proactivityEffort={effort->operate {
+                    graph.studyRuntime.setProactivityEffort(effort).getOrThrow()
+                    graph.settings.edit().putString("proactivity_effort",effort.name).apply()
+                    message("主动服务 effort 已调整为${when(effort) {
+                        ProactivityEffort.RESTRAINED->"克制服务"
+                        ProactivityEffort.INCLINED->"倾向服务"
+                        ProactivityEffort.GUARANTEED->"必定服务"
+                    }}")
+                }},
                 pickPhoto={ operate {
                     val sessionId=state.runtime.sessionId ?: return@operate
                     photoChoices=withContext(Dispatchers.IO) {SessionReviewRepository(graph.journal).photos(sessionId)}
@@ -228,7 +240,7 @@ class MainActivity : ComponentActivity() {
                         graph.studyRuntime.evaluateChosenPhoto(ChosenPhoto(photo.file.path,
                             meta.string("width")?.toIntOrNull() ?: 0,meta.string("height")?.toIntOrNull() ?: 0,
                             meta.string("rotation_degrees")?.toIntOrNull() ?: 0,meta.string("sha256").orEmpty())).getOrThrow()
-                        message("已用选中的照片跑一次完整链路")
+                        message("选中的照片已手动触发模型判断")
                     }
                 }
                 if(pickContext) ChosenContextPicker(contextChoices,onDismiss={pickContext=false}) { entry->
@@ -237,7 +249,7 @@ class MainActivity : ComponentActivity() {
                         graph.studyRuntime.evaluateChosenContext(SyntheticContextInput(
                             runCatching {SyntheticContextType.valueOf(entry.type)}.getOrDefault(SyntheticContextType.NOTE),
                             entry.title,entry.text)).getOrThrow()
-                        message("已用选中的情境跑一次完整链路")
+                        message("选中的情境已手动触发模型判断")
                     }
                 }
             }

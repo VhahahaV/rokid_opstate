@@ -59,10 +59,13 @@ class ServiceCapturePanelUiTest {
             compose.onAllNodesWithText("眼镜已拍",substring=true).onFirst().assertExists()
             compose.onAllNodesWithText("待同步",substring=true).onFirst().assertExists()
             compose.onAllNodesWithText("本次已收",substring=true).onFirst().assertExists()
-            // The upload is counted in images in this mode too, and the operator can pull a batch early.
-            compose.onAllNodesWithText("整批上传",substring=true).onFirst().assertExists()
+            // Service uploads each frame as it arrives; the current-session card owns the effort slider.
+            compose.onAllNodesWithText("每张立刻上传",substring=true).onFirst().assertExists()
             compose.onAllNodesWithText("立即同步").onFirst().assertExists()
             compose.onAllNodesWithText("拍摄与上传").onFirst().assertExists()
+            compose.onNodeWithTag("proactivity_effort_slider").assertExists()
+            compose.onNodeWithText("手动触发").performClick()
+            compose.onNodeWithText("强制服务").assertDoesNotExist()
         } finally {
             app.studyRuntime.stopSession();app.validationInferenceFactory=null
             compose.runOnUiThread {compose.activity.stopService(Intent(compose.activity,StudyRuntimeService::class.java))}

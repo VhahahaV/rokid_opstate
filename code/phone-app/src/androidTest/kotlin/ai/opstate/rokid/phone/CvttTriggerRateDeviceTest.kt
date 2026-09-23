@@ -59,7 +59,7 @@ class CvttTriggerRateDeviceTest {
                 val first=frames.first().record.occurredAtEpochMs
                 for(frame in frames) {
                     val started=android.os.SystemClock.elapsedRealtime()
-                    val decision=frontEnd.observe(frame.jpeg,frame.record.occurredAtEpochMs-first)
+                    val decision=frontEnd.observe(frame.jpegFile.readBytes(),frame.record.occurredAtEpochMs-first)
                     // The raw score, not just the decision: the score is a property of the frozen graphs
                     // and does not change with a threshold, so one pass over the material is enough to
                     // price every candidate threshold afterwards.

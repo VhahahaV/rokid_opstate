@@ -7,6 +7,7 @@ import okhttp3.Dns
 import okhttp3.OkHttpClient
 import java.io.IOException
 import java.net.InetAddress
+import java.net.Inet4Address
 import java.net.URI
 
 /** Keep harness traffic on a validated Internet route while CXR owns a separate P2P link. */
@@ -29,7 +30,13 @@ class InternetRouting(context: Context) {
         val network=specific ?: internet.firstOrNull {it==manager.activeNetwork} ?: internet.firstOrNull()
         if(network==null) throw IOException("no network route to the configured harness")
         return base.newBuilder().socketFactory(network.socketFactory).dns(object : Dns {
-            override fun lookup(hostname: String): List<InetAddress> = network.getAllByName(hostname).toList()
+            override fun lookup(hostname: String): List<InetAddress> {
+                val resolved=network.getAllByName(hostname).toList()
+                // This phone has repeatedly timed out opening DashScope's IPv6 address while the same
+                // model calls on IPv4 complete. Keep IPv6 in DNS and preserve IPv6-only links.
+                return if(hostname=="dashscope.aliyuncs.com" && resolved.any {it is Inet4Address})
+                    resolved.sortedByDescending {it is Inet4Address} else resolved
+            }
         }).build()
     }
 }

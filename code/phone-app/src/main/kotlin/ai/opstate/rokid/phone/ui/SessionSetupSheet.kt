@@ -28,9 +28,7 @@ internal const val PARTIAL_HISTORY=4
 data class SessionLaunchOptions(val alias: String,val scenarioPositionMs: Long=0,val demoMode: Boolean=true,val shadowInference: Boolean=false,
     val profile: String="BENCHMARK_ALIGNED",val mode: SessionMode=SessionMode.SERVICE,val captureIntervalMs: Long=60_000,
     val collectionHistorySessionId: String?=null,val collectionHistoryImageLimit: Int=0,val syncBatchSize: Int=60,
-    val frontEndEnabled: Boolean=true,
-    /** Demo: always ask the model for a service, so a tap reliably produces something to show. */
-    val forceService: Boolean=false)
+    val frontEndEnabled: Boolean=true)
 
 data class ImportedHistory(val sourceSessionId: String,val imageLimit: Int=0,
     val title: String,val images: Int,val contexts: Int,val recent: List<String> = emptyList())
@@ -84,7 +82,7 @@ data class ImportedHistory(val sourceSessionId: String,val imageLimit: Int=0,
             }
             Switch(frontEndEnabled,{frontEndEnabled=it})
         }
-        // 强制服务 is not offered here: it belongs to a running service, next to the sources it applies
+        // The active service card owns the three-step proactivity slider.
         // to, rather than to the act of starting one.
         // A collection fills a batch and sends it; a service session has no batch at all, because every
         // frame it takes is on its way to the phone as it is taken - the phone is where the decision

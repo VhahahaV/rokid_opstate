@@ -16,8 +16,16 @@ android {
         minSdk = 28
         testApplicationId = "ai.opstate.rokid.phone.librarytest"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        val directSources=listOf("DirectModelClient.kt","DirectModelConfig.kt","ResponseParser.kt","WireDtos.kt")
-            .flatMap {file("src/main/kotlin/ai/opstate/rokid/phone/runtime/$it").readBytes().toList()}.toByteArray()
+        val runtimeSources=listOf("DirectModelClient.kt","DirectModelConfig.kt","ResponseParser.kt","WireDtos.kt",
+            "HrTurnRunner.kt","HrWireParser.kt","ProactivityEffort.kt")
+            .map {file("src/main/kotlin/ai/opstate/rokid/phone/runtime/$it")}
+        val hrCoreSources=fileTree(rootProject.file("code/core/src/ai/opstate/core/hr")) {
+            include("*.kt")
+        }.files.sortedBy {it.name}
+        val sharedSources=listOf("context/CausalContextStore.kt","inference/InferenceContract.kt","receipt/DeliveryPolicy.kt")
+            .map {rootProject.file("code/core/src/ai/opstate/core/$it")}
+        val directSources=(runtimeSources+hrCoreSources+sharedSources)
+            .flatMap {it.readBytes().toList()}.toByteArray()
         val directHash=MessageDigest.getInstance("SHA-256").digest(directSources).joinToString("") {"%02x".format(it.toInt() and 255)}
         buildConfigField("String","DIRECT_MODEL_CODE_SHA256","\"$directHash\"")
     }

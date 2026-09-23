@@ -23,6 +23,7 @@ enum class ObservationKind {
     SENSOR_SUMMARY,
     USER_ACTION,
     ACTION_RECEIPT,
+    MODEL_NOTE,
 }
 
 enum class CaptureReason {

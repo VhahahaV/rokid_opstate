@@ -1,0 +1,193 @@
+{
+  "type": "object",
+  "properties": {
+    "observation_note": {
+      "type": "object",
+      "properties": {
+        "source_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_ids",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "candidate": {
+      "type": "object",
+      "properties": {
+        "candidate_kind": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "COMPARISON",
+            "OPEN_ITEM",
+            "DEADLINE",
+            "HANDOFF",
+            "CONFLICT",
+            null
+          ]
+        },
+        "why_now": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "available_evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "missing_facts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "next_action": {
+          "type": "string",
+          "enum": [
+            "SILENT",
+            "RETRIEVE",
+            "SERVICE"
+          ]
+        }
+      },
+      "required": [
+        "candidate_kind",
+        "why_now",
+        "available_evidence",
+        "missing_facts",
+        "next_action"
+      ],
+      "additionalProperties": false
+    },
+    "memory_ops": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "WRITE",
+              "UPDATE",
+              "FORGET"
+            ]
+          },
+          "memory_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expected_version": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "keywords": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "source_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "op",
+          "memory_id",
+          "expected_version",
+          "text",
+          "keywords",
+          "source_ids"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "route": {
+      "type": "string",
+      "enum": [
+        "SILENT",
+        "SERVICE",
+        "RETRIEVE"
+      ]
+    },
+    "query": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "service": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "AWARENESS",
+            "DECISION",
+            "PREPARATION",
+            "EXECUTION"
+          ]
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "title": {
+          "type": "string",
+          "description": "Chinese glasses title; 1 to 40 Unicode characters."
+        },
+        "body": {
+          "type": "string",
+          "description": "Chinese glasses body; 1 to 140 Unicode characters."
+        }
+      },
+      "required": [
+        "mode",
+        "title",
+        "body",
+        "evidence_ids"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "observation_note",
+    "candidate",
+    "memory_ops",
+    "route",
+    "query",
+    "service"
+  ],
+  "additionalProperties": false
+}

@@ -36,15 +36,21 @@ class TriggerVerdictUiTest {
         "trigger_types" to JsonArray(emptyList()),
         "front_end" to JsonPrimitive("cvtt_frontend_v1_calibrated"),"front_end_score" to JsonPrimitive(0.71))
 
+    private fun manual(id: String,at: Long)=photo(id,at,
+        "trigger_types" to JsonArray(listOf(JsonPrimitive("MANUAL"))),
+        "front_end" to JsonPrimitive("BYPASSED_MANUAL"))
+
     @Test fun aTriggeredFrameAnUntriggeredOneAndAHistoryFrameEachSayWhatTheyAre() {
         val photos=listOf(
             triggered("fired",3_000),
             passedOver("quiet",2_000),
+            manual("manual",1_500),
             // An imported history frame: the front end never saw it.
             photo("imported",1_000,"source" to JsonPrimitive("LOCAL_COLLECTION_HISTORY")))
         compose.setContent {StudyTheme {RecentPhotos(photos)}}
         compose.onAllNodesWithText("触发").onFirst().assertExists()
         compose.onAllNodesWithText("未触发").onFirst().assertExists()
+        compose.onAllNodesWithText("手动触发").onFirst().assertExists()
         compose.onAllNodesWithText("历史").onFirst().assertExists()
         // The verdict is on the frame, not on the strip: one picture per mark.
         compose.onNodeWithTag("photo-fired").assertExists()

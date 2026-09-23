@@ -3,6 +3,8 @@ package ai.opstate.rokid.phone.runtime
 import ai.opstate.core.context.CausalContextStore
 import ai.opstate.core.episode.EpisodeRegistry
 import ai.opstate.core.inference.*
+import ai.opstate.core.hr.HrAgentOutput
+import ai.opstate.core.hr.HrContextAssembler
 import ai.opstate.core.model.*
 import ai.opstate.core.receipt.DeliveryPolicy
 import ai.opstate.core.receipt.ReceiptPolicy
@@ -54,8 +56,9 @@ data class SessionSetup(val participantAlias: String,val endpoint: String,
     val collectionHistorySessionId: String?=null,val collectionHistoryImageLimit: Int=4,val startLiveAfterHistory: Boolean=false,
     /** Demo mode: run under the forced-service prompt so every call returns a service to show. */
     val forceService: Boolean=false,
+    val proactivityEffort: ProactivityEffort=ProactivityEffort.RESTRAINED,
     val glassesCapture: Boolean=false,val syncBatchSize: Int=60,
-    /** CVTT runs on the glasses before a visual observation is uploaded. */
+    /** Automatic CVTT runs on the phone; operator-triggered evidence bypasses it. */
     val frontEndEnabled: Boolean=true)
 /** A stored frame the operator picked to evaluate, with the measurements already recorded for it. */
 data class ChosenPhoto(val path: String,val width: Int,val height: Int,val rotationDegrees: Int,val sha256: String)
@@ -84,6 +87,8 @@ data class RuntimeViewState(val phase: String="IDLE",val sessionId: String?=null
     val frontEndEnabled: Boolean=true,val frontEndVersion: String?=null,
     /** Whether the running session asks the model for a service on every call. */
     val forceService: Boolean=false,
+    val proactivityEffort: ProactivityEffort=ProactivityEffort.RESTRAINED,
+    val proactivityAvailable: Boolean=false,
     /**
      * A session is waiting for the glasses link to come back. The foreground service holds the CPU
      * awake for this: recovery is the one moment the engine cannot afford to be descheduled, and it
@@ -133,7 +138,7 @@ class StudyRuntimeEngine(
     private var startingReply: CompletableDeferred<Result<Unit>>?=null
     private var ticker: Job?=null
     private val phoneBuild by lazy {installedBuildIdentity(context)}
-    private data class PendingModel(val packet: PacketEvaluation,val episode: CandidateEpisode,val request: InferenceRequest,val frame: ImageFrame,
+    private data class PendingModel(val packet: PacketEvaluation,val episode: CandidateEpisode,val request: InferenceRequest,val frame: ImageFrame?,
         val historicalJpegs: Map<String,ByteArray> = emptyMap())
     private data class PendingDelivery(val model: PendingModel,val decision: ServiceDecision)
     private class Session(val id: String,var epoch: Long,val setup: SessionSetup,val scenario: StudyScenarioDto,
@@ -146,6 +151,7 @@ class StudyRuntimeEngine(
         val scenarioOrigin=zeroEpoch-setup.initialPositionMs
         fun position(elapsed: Long)=if(setup.replayEnabled) playback.position(elapsed) else elapsed-zeroElapsed
         val history=CausalContextStore();val episodes=EpisodeRegistry();val receipts=ReceiptPolicy()
+        val agentHistory=mutableListOf<HrAgentOutput>()
         val packetEpisodes=linkedMapOf<String,CandidateEpisode>()
         val packets=StreamingPacketizer()
         val cadence=ObservationCadence();val quality=LocalImageQualityAnalyzer()
@@ -165,8 +171,10 @@ class StudyRuntimeEngine(
         var operatorClaimUntilElapsed=0L
         /** Whether this session currently asks the model for a service on every call. */
         var forceService=setup.forceService
+        var proactivityEffort=setup.proactivityEffort
         var observationCount=0;var packetCount=0
         val historicalImages=linkedMapOf<String,ByteArray>()
+        val historicalImagePaths=linkedMapOf<String,String>()
         /** Notes imported as this session's history; every request carries them see the store's pinnedIds. */
         val historyContextIds=linkedSetOf<String>()
         var historyReady=seed!=null || collectionSeed!=null;var automaticCapture=true;var demoMode=setup.glassesDemoMode;var lastDemoStatus: String?=null
@@ -175,6 +183,8 @@ class StudyRuntimeEngine(
         var frontEnd: CvttFrontEnd?=null
         /** A context arrived: the next frame is worth a model call whatever the front end says. */
         var digitalPending=false
+        val digitalPendingIds=linkedSetOf<String>()
+        var digitalPendingSinceEpochMs: Long?=null
         var syncBatchSize=setup.syncBatchSize
         var pendingContextCard: JsonObject?=null
         var stopping=false
@@ -184,7 +194,8 @@ class StudyRuntimeEngine(
         data class Start(val setup: SessionSetup,val reply: CompletableDeferred<Result<Unit>>): Event()
         data class Prepared(val token: Long,val session: Result<Session>): Event()
         data class Device(val event: RokidEvent): Event()
-        data class Model(val token: Long,val pending: PendingModel,val response: Result<InferenceResponse>,val latencyMs: Long): Event()
+        data class Model(val token: Long,val pending: PendingModel,val response: Result<InferenceResponse>,val latencyMs: Long,
+            val hrTurn: HrTurnOutcome?=null): Event()
         data class Pause(val reply: CompletableDeferred<Unit>): Event()
         data class Resume(val reply: CompletableDeferred<Unit>): Event()
         data class Stop(val reply: CompletableDeferred<Unit>): Event()
@@ -195,6 +206,7 @@ class StudyRuntimeEngine(
         data class EvaluatePhoto(val photo: ChosenPhoto,val reply: CompletableDeferred<Result<Unit>>): Event()
         data class EvaluateContext(val input: SyntheticContextInput,val reply: CompletableDeferred<Result<Unit>>): Event()
         data class SetForceService(val enabled: Boolean,val reply: CompletableDeferred<Result<Unit>>): Event()
+        data class SetProactivityEffort(val effort: ProactivityEffort,val reply: CompletableDeferred<Result<Unit>>): Event()
         data class ConfigureCapture(val captureIntervalMs: Long,val frontEndEnabled: Boolean,
             val syncBatchSize: Int,val reply: CompletableDeferred<Result<Unit>>): Event()
         /** One photograph the operator took out of the live record. */
@@ -224,8 +236,9 @@ class StudyRuntimeEngine(
                     is Event.EvaluatePhoto -> {val session=chosenSession();handOverToOperator(session,"MANUAL_PHOTO")
                         chosenPhoto(session,event.photo);event.reply.complete(Result.success(Unit))}
                     is Event.EvaluateContext -> {val session=chosenSession();handOverToOperator(session,"MANUAL_CONTEXT")
-                        evaluateNow(session,addContext(event.input));event.reply.complete(Result.success(Unit))}
+                        evaluateNow(session,addContext(event.input,immediateManualEvaluation=true));event.reply.complete(Result.success(Unit))}
                     is Event.SetForceService -> {applyForceService(event.enabled);event.reply.complete(Result.success(Unit))}
+                    is Event.SetProactivityEffort -> {applyProactivityEffort(event.effort);event.reply.complete(Result.success(Unit))}
                     is Event.ConfigureCapture -> {configureCapture(event);event.reply.complete(Result.success(Unit))}
                     is Event.DeletePhoto -> active?.let {session->event.reply.complete(runCatching {deletePhoto(session,event.observationId)})}
                         ?: event.reply.complete(Result.failure(IllegalStateException("NO_ACTIVE_SESSION")))
@@ -257,6 +270,8 @@ class StudyRuntimeEngine(
                     // blank note from the context picker did, by failing validation on the way in.
                     is Event.EvaluatePhoto -> event.reply.complete(Result.failure(error))
                     is Event.EvaluateContext -> event.reply.complete(Result.failure(error))
+                    is Event.SetForceService -> event.reply.complete(Result.failure(error))
+                    is Event.SetProactivityEffort -> event.reply.complete(Result.failure(error))
                     is Event.ConfigureCapture -> event.reply.complete(Result.failure(error))
                     is Event.Prepared -> {
                         startingReply?.complete(Result.failure(error));startingReply=null
@@ -312,6 +327,9 @@ class StudyRuntimeEngine(
     suspend fun setForceService(enabled: Boolean): Result<Unit> {
         val reply=CompletableDeferred<Result<Unit>>();inbox.send(Event.SetForceService(enabled,reply));return reply.await()
     }
+    suspend fun setProactivityEffort(effort: ProactivityEffort): Result<Unit> {
+        val reply=CompletableDeferred<Result<Unit>>();inbox.send(Event.SetProactivityEffort(effort,reply));return reply.await()
+    }
     /**
      * Applies camera cadence, the batch an automatic upload goes out in, and CVTT enablement while a
      * session is running. All three are capture settings, and they are the same set in both modes; only
@@ -334,7 +352,7 @@ class StudyRuntimeEngine(
         // A forced session runs under its own prompt, so its decisions carry a different prompt hash in
         // the frozen contract and can never be mistaken for ordinary ones in an export.
         val prompt=if(setup.forceService) DirectModelClient.PROMPT_FORCE_SERVICE else DirectModelClient.PROMPT_STANDARD
-        DirectModelClient.create(context,config,prompt) {modelKeyProvider(config)}
+        DirectModelClient.create(context,config,prompt,proactivityEffort=setup.proactivityEffort) {modelKeyProvider(config)}
     } ?: RemoteHarnessClient(setup.endpoint,tokenProvider,StudyWire.json,routeClient=InternetRouting(context)::client)
     private suspend fun begin(event: Event.Start) {
         check(active==null && preparation?.isActive!=true) {"SESSION_ALREADY_ACTIVE"}
@@ -374,7 +392,9 @@ class StudyRuntimeEngine(
                 val client=if(event.setup.mode==SessionMode.SERVICE) client(event.setup) else null
                 val contract=client?.contract(event.setup.expectedModelId)
                 if(contract!=null) {
-                    check(contract.protocolVersion=="opstate-online-v2") {"V5_CONTRACT_REQUIRED"}
+                    val expected=if(client is HrInferenceClient && client.hrEnabled) "opstate-online-hr-mobile-v1"
+                        else "opstate-online-v2"
+                    check(contract.protocolVersion==expected) {"V5_CONTRACT_REQUIRED"}
                     check(contract.mockMode!="dataset") {"DATASET_ENDPOINT_REQUIRES_REPLAY_MODE"}
                 }
                 val epoch=nextEpoch()
@@ -403,7 +423,7 @@ class StudyRuntimeEngine(
             startingReply?.complete(Result.failure(it));startingReply=null;return
         }
         active=session
-        _state.update {it.copy(forceService=session.forceService)}
+        _state.update {it.copy(forceService=session.forceService,proactivityEffort=session.proactivityEffort)}
         val config=StudyWire.payload("profile" to session.setup.profile,"session_mode" to session.setup.mode.name,
             "capture_interval_ms" to session.captureIntervalMs,"front_end_enabled" to session.frontEndEnabled,
             "glasses_capture" to session.setup.glassesCapture,"sync_batch_size" to session.setup.syncBatchSize,
@@ -420,7 +440,7 @@ class StudyRuntimeEngine(
                 "selected_image_count" to it.images.size,
                 "selected_observation_ids" to JsonArray(it.images.map {image->JsonPrimitive(image.sourceObservationId)}))},
             "glasses_demo_mode" to session.demoMode,"shadow_inference" to session.setup.shadowInference,
-            "force_service" to session.setup.forceService,
+            "force_service" to session.setup.forceService,"proactivity_effort" to session.proactivityEffort.name,
             "phone_build" to phoneBuild,"glasses_build" to session.peerBuild?.let {StudyWire.json.encodeToJsonElement(it)},
             "glasses_app_version" to session.peerBuild?.appVersion,
             "image_quality_policy" to StudyWire.payload("method" to "rgb-edge-32x24-v2","min_luma" to 18,"max_luma" to 238,"min_edge_energy" to 25,
@@ -442,6 +462,8 @@ class StudyRuntimeEngine(
             replayEnabled=session.setup.replayEnabled,elapsedMs=session.setup.initialPositionMs,
             durationMs=session.timeline.durationMs,markers=session.timeline.markers,glassesDemoMode=session.demoMode,
             shadowInference=session.setup.shadowInference,mode=session.setup.mode,captureIntervalMs=session.captureIntervalMs,
+            proactivityEffort=session.proactivityEffort,
+            proactivityAvailable=session.client is HrInferenceClient && (session.client as HrInferenceClient).hrEnabled,
             glassesCapture=session.setup.glassesCapture,syncBatchSize=session.setup.syncBatchSize,
             frontEndEnabled=session.frontEndEnabled,
             storageFreeBytes=context.filesDir.usableSpace)
@@ -466,7 +488,7 @@ class StudyRuntimeEngine(
                     "material_revision" to seed.candidate.materialRevision),session.zeroEpoch)
                 for(source in seed.observations) {
                     val record=if(source.observationId in imageMetadata) source.copy(content="Historical egocentric image available as visual context.") else source
-                    session.history.append(record);appendObservation(session,record,JsonObject(imageMetadata[record.observationId].orEmpty()+StudyWire.payload(
+                    session.history.append(record,maxOf(session.zeroEpoch,record.availableAtEpochMs));appendObservation(session,record,JsonObject(imageMetadata[record.observationId].orEmpty()+StudyWire.payload(
                     "source" to "R6_PUBLIC_HISTORY","source_available_at_epoch_ms" to record.availableAtEpochMs-seed.alignmentMs,
                     "source_occurred_at_epoch_ms" to record.occurredAtEpochMs-seed.alignmentMs)))}
             }
@@ -475,16 +497,19 @@ class StudyRuntimeEngine(
                 currentContext=seed.preview.recent.lastOrNull())}
         }
         session.collectionSeed?.let {seed->
+            session.agentHistory+=seed.priorServices.filter {it.producedAtEpochMs<=session.zeroEpoch}
             for(record in seed.contexts) {
-                session.history.append(record)
+                session.history.append(record,maxOf(session.zeroEpoch,record.availableAtEpochMs))
                 session.historyContextIds+=record.observationId
                 appendObservation(session,record,StudyWire.payload("source" to "LOCAL_COLLECTION_HISTORY","source_session_id" to seed.summary.sessionId))
             }
-            for((index,image) in seed.images.withIndex()) {
-                val copyId="history-${index.toString().padStart(3,'0')}-${image.sha256.take(16)}"
-                val path=journal.image(session.id,copyId,image.jpeg,image.sha256)
+            val copiedBySha=hashMapOf<String,String>()
+            for(image in seed.images) {
+                val path=copiedBySha.getOrPut(image.sha256) {
+                    journal.image(session.id,"history-${image.sha256.take(32)}",image.jpegFile.readBytes(),image.sha256)
+                }
                 session.history.append(image.record)
-                image.record.assetId?.let {session.historicalImages[it]=image.jpeg}
+                image.record.assetId?.let {session.historicalImagePaths[it]=path}
                 val metadataKeys=setOf("phone_metadata_at_epoch_ms","phone_model","phone_battery_percent","location_status","phone_location","byte_length","quality_status","camera_duration_ms","transfer_duration_ms","capture_round_trip_ms","transfer_channel","source_occurred_at_epoch_ms")
                 appendObservation(session,image.record,JsonObject(image.metadata.filterKeys {it in metadataKeys}+StudyWire.payload(
                     "source" to "LOCAL_COLLECTION_HISTORY","source_session_id" to seed.summary.sessionId,
@@ -524,6 +549,14 @@ class StudyRuntimeEngine(
         sendDemoStatus(session)
         if(session.paused) return
         if(!session.setup.glassesCapture) recordPackets(session,session.packets.advance(now))
+        else if(session.setup.mode==SessionMode.SERVICE && session.client is HrInferenceClient &&
+            (session.client as HrInferenceClient).hrEnabled && session.digitalPending &&
+            session.digitalPendingSinceEpochMs?.let {now-it>=15_000L}==true) {
+            val events=session.digitalPendingIds.toList()
+            session.digitalPending=false;session.digitalPendingIds.clear();session.digitalPendingSinceEpochMs=null
+            if(events.isNotEmpty()) recordPackets(session,listOf(ObservationPacket("digital-${UUID.randomUUID()}",now,
+                setOf("DIGITAL"),events,emptyList(),emptyList(),null,true)))
+        }
         if(_state.value.startupDisplay=="WAITING" && elapsed-session.zeroElapsed>6000)
             _state.update {it.copy(startupDisplay="UNCONFIRMED")}
         if(session.setup.mode==SessionMode.SERVICE && session.seed==null) reveal(session,now,elapsed)
@@ -702,6 +735,8 @@ class StudyRuntimeEngine(
                 if(!persisted) delivery(session,pending.decision.decisionId,outcome.status.name,outcome.reason,now)
                 else _state.update {it.copy(delivery=outcome.status.name)}
                 outcome.receipt?.let {
+                    val index=session.agentHistory.indexOfLast { output->output.packetId==pending.model.packet.packetId }
+                    if(index>=0) session.agentHistory[index]=session.agentHistory[index].copy(visiblyDelivered=true)
                     session.auditDue[current.episodeHandle]=SystemClock.elapsedRealtime()+30_000
                     session.serviceVisible=true;session.visibleDecisionId=pending.decision.decisionId
                     val visibleLatency=event.visibleAtEpochMs-pending.decision.producedAtEpochMs
@@ -732,8 +767,9 @@ class StudyRuntimeEngine(
     }
     private suspend fun image(session: Session,frame: ImageFrame) {
         val pending=session.capture
+        val manual=frame.sourceMetadata["trigger_types"]?.jsonArray?.any {it.jsonPrimitive.contentOrNull=="MANUAL"}==true
         if(!frame.buffered && (pending==null || frame.captureId!=pending.captureId || session.paused)) return
-        if(frame.buffered && !session.setup.glassesCapture) return
+        if(frame.buffered && !session.setup.glassesCapture && !(manual && frame.transferChannel=="CHOSEN_SOURCE")) return
         if(frame.buffered && frame.captureId in session.committedBuffered) {
             commitBuffered(session,frame);return
         }
@@ -751,8 +787,12 @@ class StudyRuntimeEngine(
         // nothing else - a quality gate in front of it would be a second, unfrozen opinion about which
         // pictures existed, and the rate it produces is a property of the release, measured over whole
         // sessions. A dark or moving frame is a frame the model is allowed to have seen and to decline.
-        val verdict=if(session.setup.mode==SessionMode.SERVICE && session.setup.glassesCapture)
-            frontEndVerdict(session,frame) else JsonObject(emptyMap())
+        val verdict=when {
+            session.setup.mode==SessionMode.SERVICE && manual -> StudyWire.payload(
+                "front_end" to "BYPASSED_MANUAL","trigger_types" to JsonArray(listOf(JsonPrimitive("MANUAL"))))
+            session.setup.mode==SessionMode.SERVICE && session.setup.glassesCapture -> frontEndVerdict(session,frame)
+            else -> JsonObject(emptyMap())
+        }
         val path=journal.image(session.id,frame.captureId,frame.jpegBytes,frame.sha256)
         val observation=ObservationRecord("obs-${frame.captureId}",ObservationKind.IMAGE,frame.capturedAtEpochMs,frame.receivedAtEpochMs,
             "Current egocentric image observation.",assetId="asset-${frame.sha256.take(16)}")
@@ -780,7 +820,7 @@ class StudyRuntimeEngine(
             // counted. A service session is not collecting: the frame is kept, evaluated by the front end
             // like any other, and the measurement is recorded - asking for a second shot because the first
             // was dark is exactly the gate the front end does not have.
-            if(session.setup.mode==SessionMode.COLLECTION || !session.setup.glassesCapture) {
+            if(session.setup.mode==SessionMode.COLLECTION || (!session.setup.glassesCapture && !manual)) {
                 if(session.captureRetry<1) {session.captureRetry++;capture(session,setOf(CaptureReason.QUALITY_RETRY))}
                 else {session.captureRetry=0;_state.update {it.copy(error=code)}}
                 _state.update {it.copy(observationStatus=code)}
@@ -791,19 +831,20 @@ class StudyRuntimeEngine(
         session.captureRetry=0
         session.latestFrame=frame;session.latestQuality=quality
         if(session.setup.mode==SessionMode.COLLECTION) _state.update {it.copy(observationStatus="IMAGE_SAVED")}
-        if(session.setup.glassesCapture && session.setup.mode==SessionMode.SERVICE) {
+        if(session.setup.mode==SessionMode.SERVICE && (session.setup.glassesCapture || manual)) {
             // What makes this frame worth a model call: the front end fired on it, or a context arrived
             // since the last one, or the operator asked for it by taking the photograph themselves.
             val fired=verdict["trigger_types"]?.jsonArray?.mapNotNull {it.jsonPrimitive.contentOrNull}.orEmpty().toSet()
-            val manual=frame.sourceMetadata["trigger_types"]?.jsonArray?.any {it.jsonPrimitive.contentOrNull=="MANUAL"}==true
             val triggers=buildSet {
                 addAll(fired)
                 if(manual) add("MANUAL")
                 if(session.digitalPending) add("DIGITAL")
             }
+            val newEvents=(session.digitalPendingIds+observation.observationId).toList()
             session.digitalPending=false
+            session.digitalPendingIds.clear();session.digitalPendingSinceEpochMs=null
             if(triggers.isNotEmpty()) recordPackets(session,listOf(ObservationPacket("edge-${frame.captureId}",frame.receivedAtEpochMs,triggers,
-                listOf(observation.observationId),listOf(requireNotNull(observation.assetId)),emptyList(),frame.receivedAtEpochMs-frame.capturedAtEpochMs,false)))
+                newEvents,listOf(requireNotNull(observation.assetId)),emptyList(),frame.receivedAtEpochMs-frame.capturedAtEpochMs,false)))
         } else if(session.setup.mode==SessionMode.SERVICE) recordPackets(session,session.packets.onImage(observation.observationId,requireNotNull(observation.assetId),frame.receivedAtEpochMs,
             VisualSignatureExtractor.fromJpeg(frame.jpegBytes)))
         kickModel(session);updatePhase(session)
@@ -836,6 +877,16 @@ class StudyRuntimeEngine(
     private fun kickModel(session: Session) {
         if(session.setup.mode!=SessionMode.SERVICE) return
         if(session.paused || session.model!=null || session.queue.isEmpty() || !transport.ready.value) return
+        if(session.client is HrInferenceClient && (session.client as HrInferenceClient).hrEnabled) {
+            val now=System.currentTimeMillis()
+            while(session.queue.isNotEmpty() && now-session.queue.first().packet.snapshotAtEpochMs>=30_000L) {
+                val expired=session.queue.removeFirst()
+                session.packetEpisodes.remove(expired.episode.episodeHandle)
+                journal.append(session.id,"runtime_events","HR_PACKET_EXPIRED_IN_QUEUE",StudyWire.payload(
+                    "packet_id" to expired.packet.packetId,"age_ms" to (now-expired.packet.snapshotAtEpochMs)),now)
+            }
+            if(session.queue.isEmpty()) return
+        }
         // The display normally belongs to the card that is on it, and everything waits for it to go. What
         // does not wait is a service the operator asked for: they cleared the display when they pressed,
         // and the glasses may not have confirmed it yet, so their card takes the display on their word
@@ -846,19 +897,34 @@ class StudyRuntimeEngine(
             session.sensor?.contextCardVisible==true || session.sensor?.serviceCardVisible==true)) return
         if(operatorClaim) session.operatorClaimUntilElapsed=0L
         val pending=session.queue.removeFirst();session.model=pending
+        val priorOutputs=session.agentHistory.toList()
         _state.update {it.copy(latestPacketId=pending.packet.packetId)}
         val token=generation
         journal.append(session.id,"inference_requests","INFERENCE_SENT",requestJournalJson(pending.request),System.currentTimeMillis())
         session.modelJob=scope.launch {
             val started=SystemClock.elapsedRealtime()
-            val result=try {Result.success(requireNotNull(session.client).evaluateWithHistory(
-                pending.request,pending.frame.jpegBytes,pending.historicalJpegs) {raw->
+            var hrTurn: HrTurnOutcome?=null
+            val result=try {
+                val client=requireNotNull(session.client)
+                val response=if(client is HrInferenceClient && client.hrEnabled) {
+                    hrTurn=client.evaluateHrTurn(pending.request,pending.frame?.jpegBytes ?: ByteArray(0),emptyMap(),
+                        session.history,priorOutputs) {raw->
+                        journal.append(session.id,"raw_responses",if(raw.format.startsWith("PROVIDER_")) "PROVIDER_RESPONSE" else "RAW_DECISION",
+                            StudyWire.payload("request_id" to raw.requestId,"packet_id" to pending.packet.packetId,
+                                "http_status" to raw.httpStatus,"raw_response_json" to raw.body,"raw_sha256" to raw.bodySha256,
+                                "latency_ms" to raw.latencyMs,"raw_format" to raw.format,"redacted" to raw.redacted),raw.receivedAtEpochMs)
+                    }
+                    requireNotNull(hrTurn).response
+                } else client.evaluateWithHistory(pending.request,requireNotNull(pending.frame).jpegBytes,pending.historicalJpegs) {raw->
                 journal.append(session.id,"raw_responses",if(raw.format.startsWith("PROVIDER_")) "PROVIDER_RESPONSE" else "RAW_DECISION",
                     StudyWire.payload("request_id" to raw.requestId,"packet_id" to pending.packet.packetId,
                     "http_status" to raw.httpStatus,"raw_response_json" to raw.body,"raw_sha256" to raw.bodySha256,"latency_ms" to raw.latencyMs,
                     "raw_format" to raw.format,"redacted" to raw.redacted),raw.receivedAtEpochMs)
-            })} catch(cancelled: CancellationException) {throw cancelled} catch(error: Exception) {Result.failure(error)}
-            inbox.send(Event.Model(token,pending,result,SystemClock.elapsedRealtime()-started))
+                }
+                Result.success(response)
+            } catch(cancelled: CancellationException) {throw cancelled} catch(error: Exception) {Result.failure(error)}
+            inbox.send(Event.Model(token,hrTurn?.let {pending.copy(request=it.request)} ?: pending,
+                result,SystemClock.elapsedRealtime()-started,hrTurn))
         }
         updatePhase(session)
     }
@@ -875,14 +941,49 @@ class StudyRuntimeEngine(
             session.packetEpisodes.remove(event.pending.episode.episodeHandle)
             _state.update {state->state.copy(error=it.message)};kickModel(session);updatePhase(session);return
         }
+        event.hrTurn?.let {turn->
+            val step=turn.step
+            journal.append(session.id,"inference_requests","HR_EFFECTIVE_REQUEST",
+                requestJournalJson(turn.request),now)
+            journal.append(session.id,"runtime_events","HR_STEP",StudyWire.payload(
+                "packet_id" to event.pending.packet.packetId,"route" to step.route.name,
+                "candidate_kind" to step.candidate.kind?.name,"why_now" to step.candidate.whyNow,
+                "available_evidence" to JsonArray(step.candidate.availableEvidence.map(::JsonPrimitive)),
+                "missing_facts" to JsonArray(step.candidate.missingFacts.map(::JsonPrimitive)),
+                "query" to step.query,"note" to step.note.text,
+                "note_source_ids" to JsonArray(step.note.sourceIds.map(::JsonPrimitive))),now)
+            if(step.note.text.isNotBlank()) {
+                val note=ObservationRecord("note-${event.pending.packet.packetId}",ObservationKind.MODEL_NOTE,
+                    event.pending.packet.snapshotAtEpochMs,now,step.note.text)
+                session.history.append(note,now,step.note.sourceIds.toSet())
+                appendObservation(session,note,StudyWire.payload("source" to "MODEL_GENERATED_VISUAL_NOTE",
+                    "source_ids" to JsonArray(step.note.sourceIds.map(::JsonPrimitive))))
+            }
+            if(turn.final!=null) journal.append(session.id,"runtime_events","HR_FINAL",StudyWire.payload(
+                "packet_id" to event.pending.packet.packetId,"decision" to turn.final.decision.name,
+                "retrieved_ids" to JsonArray(turn.retrievedIds.map(::JsonPrimitive))),now)
+            if(turn.forcedModelPass) journal.append(session.id,"runtime_events","HR_GUARANTEED_MODEL_SERVICE",
+                StudyWire.payload("packet_id" to event.pending.packet.packetId,
+                    "effort" to session.proactivityEffort.name,"initial_route" to step.route.name,
+                    "regeneration_reason" to (turn.timingSuppression ?: "MODEL_SILENT")),now)
+            else turn.timingSuppression?.let {reason->journal.append(session.id,"runtime_events","HR_TIMING_SUPPRESSED",
+                StudyWire.payload("packet_id" to event.pending.packet.packetId,"reason" to reason),now)}
+            if(response.decision==DecisionLabel.SERVICE) session.agentHistory+=HrAgentOutput(
+                event.pending.packet.packetId,response.producedAtEpochMs,response.title.orEmpty(),response.body.orEmpty(),
+                response.evidenceObservationIds.toList(),false)
+        }
         journal.append(session.id,"decisions","MODEL_DECISION",StudyWire.payload("request_id" to response.requestId,"packet_id" to event.pending.packet.packetId,
             "decision_id" to response.decisionId,"decision" to response.decision.name,"evidence_observation_ids" to JsonArray(response.evidenceObservationIds.map(::JsonPrimitive)),
             "service_mode" to response.serviceMode?.name,"title" to response.title,"body" to response.body,
             "produced_at_epoch_ms" to response.producedAtEpochMs,"expires_at_epoch_ms" to response.expiresAtEpochMs,"model_latency_ms" to event.latencyMs),now)
         val verdict=DeliveryPolicy.evaluate(event.pending.request,response,event.pending.episode,session.packetEpisodes[event.pending.episode.episodeHandle],
             session.id,session.epoch,session.id,session.epoch,now,session.receipts,session.serviceVisible || session.delivery!=null,
-            DeliveryPolicy.groundingFor(event.pending.request),
-            if(session.forceService) DeliveryPolicy.Mode.FORCED_DEMO else DeliveryPolicy.Mode.PRODUCTION)
+            if(event.hrTurn!=null) DeliveryPolicy.Grounding.ANY else DeliveryPolicy.groundingFor(event.pending.request),
+            when {
+                event.hrTurn!=null && session.proactivityEffort==ProactivityEffort.GUARANTEED -> DeliveryPolicy.Mode.GUARANTEED
+                session.forceService -> DeliveryPolicy.Mode.FORCED_DEMO
+                else -> DeliveryPolicy.Mode.PRODUCTION
+            })
         _state.update {it.copy(decisions=it.decisions+1,rawDecision=response.decision.name,delivery=verdict.status.name,error=null)}
         if(verdict.status==DeliveryPolicy.Status.DELIVER && session.setup.shadowInference) {
             delivery(session,response.decisionId,"NOT_ATTEMPTED","SHADOW_INFERENCE",now)
@@ -994,7 +1095,8 @@ class StudyRuntimeEngine(
         check(session.setup.replayEnabled) {"REPLAY_DISABLED"}
         require(event.positionMs in 0..session.timeline.durationMs) {"REPLAY_POSITION_INVALID"}
         check(transport.ready.value) {"CONNECT_GLASSES_FIRST"}
-        val setup=session.setup.copy(initialPositionMs=event.positionMs,replayParentSessionId=session.id)
+        val setup=session.setup.copy(initialPositionMs=event.positionMs,replayParentSessionId=session.id,
+            forceService=session.forceService,proactivityEffort=session.proactivityEffort)
         journal.append(session.id,"runtime_events","REPLAY_SEEK",StudyWire.payload(
             "from_position_ms" to session.position(SystemClock.elapsedRealtime()),"to_position_ms" to event.positionMs,
             "policy" to "NEW_SESSION_SEGMENT"),System.currentTimeMillis())
@@ -1009,14 +1111,53 @@ class StudyRuntimeEngine(
     private suspend fun applyForceService(enabled: Boolean) {
         val session=chosenSession()
         if(session.forceService==enabled) return
-        val setup=session.setup.copy(forceService=enabled)
+        val setup=session.setup.copy(forceService=enabled,proactivityEffort=session.proactivityEffort)
         val rebuilt=client(setup).also {session.client=it}
         session.contract=rebuilt.contract(setup.expectedModelId)
         session.forceService=enabled
         val now=System.currentTimeMillis()
         journal.append(session.id,"runtime_events","FORCE_SERVICE_CHANGED",StudyWire.payload(
             "enabled" to enabled,"prompt_hash" to session.contract?.promptHash),now)
-        _state.update {it.copy(forceService=enabled)}
+        _state.update {it.copy(forceService=enabled,
+            proactivityAvailable=rebuilt is HrInferenceClient && rebuilt.hrEnabled)}
+    }
+    private suspend fun applyProactivityEffort(effort: ProactivityEffort) {
+        val session=chosenSession()
+        check(session.client is HrInferenceClient && (session.client as HrInferenceClient).hrEnabled) {
+            "PROACTIVITY_REQUIRES_DIRECT_HR"
+        }
+        if(session.proactivityEffort==effort && !session.forceService) return
+        val previous=session.proactivityEffort
+        // An in-flight answer belongs to the old prompt. Preserve its packet while it is still fresh;
+        // completed cards already on the glasses retain their visible ACK lifecycle.
+        generation++
+        session.modelJob?.cancelAndJoin();session.modelJob=null
+        val now=System.currentTimeMillis()
+        val queued=listOfNotNull(session.model)+session.queue.toList()
+        session.model?.let {journal.append(session.id,"runtime_events","INFERENCE_CANCELLED",StudyWire.payload(
+            "request_id" to it.request.requestId,"packet_id" to it.packet.packetId,
+            "code" to "PROACTIVITY_CHANGED"),now)}
+        session.model=null;session.queue.clear()
+        val setup=session.setup.copy(forceService=false,proactivityEffort=effort)
+        val rebuilt=client(setup)
+        val contract=rebuilt.contract(setup.expectedModelId)
+        session.client=rebuilt;session.contract=contract;session.forceService=false;session.proactivityEffort=effort
+        for(pending in queued) {
+            if(now-pending.packet.snapshotAtEpochMs>=30_000L) {
+                session.packetEpisodes.remove(pending.episode.episodeHandle)
+                journal.append(session.id,"runtime_events","HR_PACKET_EXPIRED_IN_QUEUE",StudyWire.payload(
+                    "packet_id" to pending.packet.packetId,"reason" to "PROACTIVITY_CHANGED"),now)
+            } else session.queue.addLast(pending.copy(request=pending.request.copy(
+                requestId="request-${UUID.randomUUID()}",
+                promptHash=contract.promptHash,preprocessHash=contract.preprocessHash,
+                parserHash=contract.parserHash,protocolVersion=contract.protocolVersion,modelId=contract.modelId)))
+        }
+        journal.append(session.id,"runtime_events","PROACTIVITY_EFFORT_CHANGED",StudyWire.payload(
+            "from" to previous.name,"to" to effort.name,"prompt_hash" to contract.promptHash,
+            "queued_rebound" to session.queue.size),now)
+        _state.update {it.copy(proactivityEffort=effort,proactivityAvailable=rebuilt is HrInferenceClient && rebuilt.hrEnabled,
+            forceService=false,error=null)}
+        checkpoint(session);kickModel(session);updatePhase(session)
     }
     private fun chosenSession(): Session {
         val session=active ?: error("NO_ACTIVE_SESSION")
@@ -1074,7 +1215,7 @@ class StudyRuntimeEngine(
             listOf(observation.observationId),listOfNotNull(observation.assetId),emptyList(),0L,false)
         recordPackets(session,listOf(packet));kickModel(session);updatePhase(session)
     }
-    private suspend fun addContext(input: SyntheticContextInput): ObservationRecord {
+    private suspend fun addContext(input: SyntheticContextInput,immediateManualEvaluation: Boolean=false): ObservationRecord {
         input.validate()
         val session=active ?: error("NO_ACTIVE_SESSION")
         check(session.setup.mode==SessionMode.SERVICE) {"CONTEXT_REQUIRES_SERVICE_MODE"}
@@ -1091,14 +1232,20 @@ class StudyRuntimeEngine(
             episodeHandle=handle,materialRevision=candidate.materialRevision)
         session.history.append(observation)
         appendObservation(session,observation,StudyWire.payload("source" to "OPERATOR_SYNTHETIC","synthetic_type" to input.type.name))
-        if(session.setup.glassesCapture) session.digitalPending=true
-        else recordPackets(session,session.packets.onDigital(observation.observationId,observation.availableAtEpochMs))
+        if(!immediateManualEvaluation) {
+            if(session.setup.glassesCapture) {
+                session.digitalPending=true
+                session.digitalPendingIds+=observation.observationId
+                if(session.digitalPendingSinceEpochMs==null) session.digitalPendingSinceEpochMs=observation.availableAtEpochMs
+            } else recordPackets(session,session.packets.onDigital(observation.observationId,observation.availableAtEpochMs))
+        }
         journal.append(session.id,"context_events","OPERATOR_CONTEXT_ADDED",StudyWire.payload("observation" to observationJson(observation),
-            "synthetic_type" to input.type.name,"title" to input.title,"show_on_glasses" to input.showOnGlasses),now)
+            "synthetic_type" to input.type.name,"title" to input.title,"show_on_glasses" to (input.showOnGlasses && !immediateManualEvaluation),
+            "manual_evaluation" to immediateManualEvaluation),now)
         session.materialAt=now;session.materialPending+=handle
         _state.update {it.copy(currentContext=input.publicText(),rawDecision=null,delivery=null,error=null)}
         session.pendingContextCard=null
-        if(input.showOnGlasses) {
+        if(input.showOnGlasses && !immediateManualEvaluation) {
           val payload=StudyWire.payload(
             "event_id" to observation.observationId,"title" to "${input.type.label} · ${input.title}".take(40),
             "body" to input.body.take(140),"visible_for_ms" to 8000)
@@ -1261,7 +1408,7 @@ class StudyRuntimeEngine(
         "phone_build" to phoneBuild,"glasses_build" to session.peerBuild?.let {StudyWire.json.encodeToJsonElement(it)},
         "glasses_app_version" to session.peerBuild?.appVersion,
         "session_mode" to session.setup.mode.name,"capture_interval_ms" to session.captureIntervalMs,
-        "front_end_enabled" to session.frontEndEnabled,
+        "front_end_enabled" to session.frontEndEnabled,"proactivity_effort" to session.proactivityEffort.name,
         "contract" to session.contract?.let {StudyWire.json.encodeToJsonElement(it)}),System.currentTimeMillis())}
     private fun appendObservation(session: Session,record: ObservationRecord,extra: JsonObject=JsonObject(emptyMap())) {
         journal.append(session.id,"observations","OBSERVATION_PERSISTED",JsonObject(observationJson(record)+extra),record.availableAtEpochMs)
@@ -1279,6 +1426,30 @@ class StudyRuntimeEngine(
             "freshness" to StudyWire.payload("latest_image_age_ms" to packet.latestImageAgeMs,"observation_gap" to packet.observationGap)),packet.cutoffEpochMs)
             session.packetCount++;_state.update {it.copy(packets=session.packetCount)}
             if(session.setup.mode==SessionMode.COLLECTION) return@forEach
+            val hr=session.client is HrInferenceClient && (session.client as HrInferenceClient).hrEnabled
+            if(hr && packet.imageIds.isEmpty() && packet.newEventIds.isNotEmpty() &&
+                packet.triggerTypes.any {it=="DIGITAL" || it=="MANUAL"}) {
+                val episode=CandidateEpisode("stream-${packet.packetId}","stream","packet-stream",ServiceMode.AWARENESS,materialRevision=0)
+                session.packetEpisodes[episode.episodeHandle]=episode
+                val evaluation=PacketEvaluation(packet.packetId,packet.cutoffEpochMs,packet.newEventIds.last(),"NO_IMAGE",packet.triggerTypes)
+                val context=HrContextAssembler(session.history).step(packet.cutoffEpochMs,System.currentTimeMillis(),
+                    packet.newEventIds.toSet(),emptySet())
+                val selected=(context.newRecords+context.recentContext+context.prefetchedHistory).distinctBy {it.observationId}
+                val contract=requireNotNull(session.contract)
+                val request=InferenceRequest(contract.protocolVersion,"request-${UUID.randomUUID()}",packet.packetId,
+                    packet.cutoffEpochMs,"NO_IMAGE",StudyWire.sha256(ByteArray(0)),
+                    ModelCandidate("stream",episode.episodeHandle),selected.map {record->ModelObservation(
+                        record.observationId,record.kind,record.occurredAtEpochMs,record.availableAtEpochMs,
+                        record.content,record.assetId,record.episodeHandle,record.materialRevision)},emptyList(),
+                    contract.promptHash,contract.preprocessHash,contract.modelId,contract.parserHash,
+                    packet.triggerTypes,packet.newEventIds,null,true)
+                journal.append(session.id,"runtime_events","HR_TEXT_CONTEXT",StudyWire.payload(
+                    "packet_id" to packet.packetId,"new_event_ids" to JsonArray(packet.newEventIds.map(::JsonPrimitive)),
+                    "visible_ids" to JsonArray(selected.map {JsonPrimitive(it.observationId)})),packet.cutoffEpochMs)
+                session.queue.addLast(PendingModel(evaluation,episode,request,null))
+                _state.update {it.copy(observationStatus="TEXT_PACKET_QUEUED")}
+                return@forEach
+            }
             val frame=session.latestFrame ?: return@forEach
             val quality=session.latestQuality ?: return@forEach
             if(packet.imageIds.isEmpty() || packet.observationGap) return@forEach
@@ -1286,12 +1457,20 @@ class StudyRuntimeEngine(
             session.packetEpisodes[episode.episodeHandle]=episode
             val evaluation=PacketEvaluation(packet.packetId,packet.cutoffEpochMs,packet.newEventIds.lastOrNull() ?: "heartbeat",
                 packet.imageIds.last(),packet.triggerTypes)
-            val (workingSet,trace)=session.history.historyRetrievalDetailed(packet.cutoffEpochMs,packet.newEventIds,pinnedIds=session.historyContextIds)
+            val (workingSet,trace)=if(hr) {
+                val context=HrContextAssembler(session.history).step(packet.cutoffEpochMs,System.currentTimeMillis(),
+                    packet.newEventIds.toSet(),session.history.causalArchiveSnapshot(packet.cutoffEpochMs,System.currentTimeMillis())
+                        .filter {it.assetId==packet.imageIds.last()}.mapTo(hashSetOf()) {it.observationId})
+                (context.newRecords+context.recentContext+context.prefetchedHistory).distinctBy {it.observationId} to
+                    CausalContextStore.RetrievalTrace(emptyList(),context.newRecords.map {it.observationId},
+                        context.recentContext.map {it.observationId},context.prefetchedHistory.map {it.observationId},
+                        emptyList(),emptyList())
+            } else session.history.historyRetrievalDetailed(packet.cutoffEpochMs,packet.newEventIds,pinnedIds=session.historyContextIds)
             val retrieved=(workingSet + session.history.causalSnapshot(packet.cutoffEpochMs).filter {it.assetId==packet.imageIds.last()})
                 .distinctBy {it.observationId}.sortedBy {it.availableAtEpochMs}
             // What the model was given out of the record decides what it could possibly say, so the tiers
             // are recorded: a run that served on nothing has to be readable back to its own working set.
-            journal.append(session.id,"runtime_events","HISTORY_RETRIEVAL",StudyWire.payload("packet_id" to packet.packetId,
+            journal.append(session.id,"runtime_events",if(hr) "HR_CONTEXT_PREFETCH" else "HISTORY_RETRIEVAL",StudyWire.payload("packet_id" to packet.packetId,
                 "new_event_ids" to JsonArray(packet.newEventIds.map(::JsonPrimitive)),
                 "injected_observation_ids" to JsonArray(retrieved.map {JsonPrimitive(it.observationId)}),"injected_count" to retrieved.size,
                 "query_terms" to JsonArray(trace.queryTerms.map(::JsonPrimitive)),"exact_count" to trace.exactIds.size,
@@ -1301,9 +1480,29 @@ class StudyRuntimeEngine(
             val request=InferenceContract.buildPacketRequest("request-${UUID.randomUUID()}",evaluation,quality,retrieved,session.receipts.allReceipts(),
                 contract.promptHash,contract.preprocessHash,contract.modelId,contract.parserHash,contract.protocolVersion,
                 packet.newEventIds,packet.latestImageAgeMs,packet.observationGap)
-            val historicalJpegs=retrieved.mapNotNull {record->record.assetId?.let {asset->session.historicalImages[asset]?.let {asset to it}}}
+            val historicalJpegs=retrieved.mapNotNull {record->record.assetId?.let {asset->
+                val bytes=session.historicalImages[asset] ?: session.historicalImagePaths[asset]
+                    ?.let {path->journal.localImage(session.id,path).readBytes()}
+                bytes?.let {asset to it}
+            }}
                 .takeLast(4).toMap(linkedMapOf())
-            session.queue.addLast(PendingModel(evaluation,episode,request,frame,historicalJpegs))
+            var pending=PendingModel(evaluation,episode,request,frame,historicalJpegs)
+            if(hr && session.queue.size>=8) {
+                val displaced=session.queue.removeFirst()
+                val carried=displaced.request.packetNewEventIds.filter {id->
+                    session.history.causalSnapshot(packet.cutoffEpochMs).any {
+                        it.observationId==id && it.kind!=ObservationKind.IMAGE
+                    }
+                }
+                if(carried.isNotEmpty()) pending=pending.copy(request=pending.request.copy(
+                    packetNewEventIds=(carried+pending.request.packetNewEventIds).distinct(),
+                    packetTriggerTypes=pending.request.packetTriggerTypes+"DIGITAL"))
+                session.packetEpisodes.remove(displaced.episode.episodeHandle)
+                journal.append(session.id,"runtime_events","HR_PACKET_COALESCED",StudyWire.payload(
+                    "displaced_packet_id" to displaced.packet.packetId,"into_packet_id" to packet.packetId,
+                    "carried_digital_ids" to JsonArray(carried.map(::JsonPrimitive))),packet.cutoffEpochMs)
+            }
+            session.queue.addLast(pending)
             _state.update {it.copy(observationStatus="PACKET_QUEUED")}
         }
     }
